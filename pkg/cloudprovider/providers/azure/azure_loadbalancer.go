@@ -36,7 +36,7 @@ import (
 const ServiceAnnotationLoadBalancerInternal = "service.beta.kubernetes.io/azure-load-balancer-internal"
 
 // ServiceAnnotationLoadBalancerSubnet is the annotation used on the service
-const ServiceAnnotationLoadBalancerSubnet = "service.beta.kubernetes.io/azure-load-balancer-subnet"
+const ServiceAnnotationLoadBalancerInternalSubnet = "service.beta.kubernetes.io/azure-load-balancer-internal-subnet"
 
 // GetLoadBalancer returns whether the specified load balancer exists, and
 // if so, what its status is.
@@ -1004,7 +1004,7 @@ func requiresInternalLoadBalancer(service *v1.Service) bool {
 }
 
 func getSubnetName(service *v1.Service) (bool, string) {
-	if l, ok := service.Annotations[ServiceAnnotationLoadBalancerSubnet]; ok {
+	if l, ok := service.Annotations[ServiceAnnotationLoadBalancerInternalSubnet]; ok {
 		return true, l
 	}
 
