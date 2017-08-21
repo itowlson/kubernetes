@@ -1008,5 +1008,5 @@ func getSubnetName(service *v1.Service) (bool, string) {
 		return true, l
 	}
 
-	return false, nil
+	return false, ""
 }
