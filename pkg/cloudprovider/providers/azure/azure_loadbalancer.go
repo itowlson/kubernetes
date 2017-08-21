@@ -35,11 +35,19 @@ import (
 // ServiceAnnotationLoadBalancerInternal is the annotation used on the service
 const ServiceAnnotationLoadBalancerInternal = "service.beta.kubernetes.io/azure-load-balancer-internal"
 
+// ServiceAnnotationLoadBalancerInternalSubnet is the annotation used on the service
+const ServiceAnnotationLoadBalancerInternalSubnet = "service.beta.kubernetes.io/azure-load-balancer-internal-subnet"
+
 // GetLoadBalancer returns whether the specified load balancer exists, and
 // if so, what its status is.
 func (az *Cloud) GetLoadBalancer(clusterName string, service *v1.Service) (status *v1.LoadBalancerStatus, exists bool, err error) {
 	isInternal := requiresInternalLoadBalancer(service)
-	lbName := getLoadBalancerName(clusterName, isInternal)
+	subnetSpecified, subnetName := getSubnetName(service)
+	if !subnetSpecified {
+		subnetName = az.SubnetName
+	}
+
+	lbName := getLoadBalancerName(clusterName, isInternal, subnetSpecified, subnetName)
 	serviceName := getServiceName(service)
 
 	lb, existsLb, err := az.getAzureLoadBalancer(lbName)
@@ -116,13 +124,18 @@ func (az *Cloud) determinePublicIPName(clusterName string, service *v1.Service) 
 
 // EnsureLoadBalancer creates a new load balancer 'name', or updates the existing one. Returns the status of the balancer
 func (az *Cloud) EnsureLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error) {
+	subnetSpecified, subnetName := getSubnetName(service)
+	if !subnetSpecified {
+		subnetName = az.SubnetName
+	}
+
 	isInternal := requiresInternalLoadBalancer(service)
-	lbName := getLoadBalancerName(clusterName, isInternal)
+	lbName := getLoadBalancerName(clusterName, isInternal, subnetSpecified, subnetName)
 
 	// When a client updates the internal load balancer annotation,
 	// the service may be switched from an internal LB to a public one, or vise versa.
 	// Here we'll firstly ensure service do not lie in the opposite LB.
-	err := az.cleanupLoadBalancer(clusterName, service, !isInternal)
+	err := az.cleanupLoadBalancer(clusterName, service, !isInternal, subnetSpecified, subnetName)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +195,7 @@ func (az *Cloud) EnsureLoadBalancer(clusterName string, service *v1.Service, nod
 	var fipConfigurationProperties *network.FrontendIPConfigurationPropertiesFormat
 
 	if isInternal {
-		subnet, existsSubnet, err := az.getSubnet(az.VnetName, az.SubnetName)
+		subnet, existsSubnet, err := az.getSubnet(az.VnetName, subnetName)
 		if err != nil {
 			return nil, err
 		}
@@ -301,13 +314,18 @@ func (az *Cloud) UpdateLoadBalancer(clusterName string, service *v1.Service, nod
 // have multiple underlying components, meaning a Get could say that the LB
 // doesn't exist even if some part of it is still laying around.
 func (az *Cloud) EnsureLoadBalancerDeleted(clusterName string, service *v1.Service) error {
+	subnetSpecified, subnetName := getSubnetName(service)
+	if !subnetSpecified {
+		subnetName = az.SubnetName
+	}
+
 	isInternal := requiresInternalLoadBalancer(service)
-	lbName := getLoadBalancerName(clusterName, isInternal)
+	lbName := getLoadBalancerName(clusterName, isInternal, subnetSpecified, subnetName)
 	serviceName := getServiceName(service)
 
 	glog.V(5).Infof("delete(%s): START clusterName=%q lbName=%q", serviceName, clusterName, lbName)
 
-	err := az.cleanupLoadBalancer(clusterName, service, isInternal)
+	err := az.cleanupLoadBalancer(clusterName, service, isInternal, subnetSpecified, subnetName)
 	if err != nil {
 		return err
 	}
@@ -351,8 +369,8 @@ func (az *Cloud) EnsureLoadBalancerDeleted(clusterName string, service *v1.Servi
 	return nil
 }
 
-func (az *Cloud) cleanupLoadBalancer(clusterName string, service *v1.Service, isInternalLb bool) error {
-	lbName := getLoadBalancerName(clusterName, isInternalLb)
+func (az *Cloud) cleanupLoadBalancer(clusterName string, service *v1.Service, isInternalLb bool, subnetSpecified bool, subnetName string) error {
+	lbName := getLoadBalancerName(clusterName, isInternalLb, subnetSpecified, subnetName)
 	serviceName := getServiceName(service)
 
 	glog.V(10).Infof("ensure lb deleted: clusterName=%q, serviceName=%s, lbName=%q", clusterName, serviceName, lbName)
@@ -520,8 +538,13 @@ func (az *Cloud) ensurePublicIPDeleted(serviceName, pipName string) error {
 // This also reconciles the Service's Ports  with the LoadBalancer config.
 // This entails adding rules/probes for expected Ports and removing stale rules/ports.
 func (az *Cloud) reconcileLoadBalancer(lb network.LoadBalancer, fipConfigurationProperties *network.FrontendIPConfigurationPropertiesFormat, clusterName string, service *v1.Service, nodes []*v1.Node) (network.LoadBalancer, bool, error) {
+	subnetSpecified, subnetName := getSubnetName(service)
+	if !subnetSpecified {
+		subnetName = az.SubnetName
+	}
+
 	isInternal := requiresInternalLoadBalancer(service)
-	lbName := getLoadBalancerName(clusterName, isInternal)
+	lbName := getLoadBalancerName(clusterName, isInternal, subnetSpecified, subnetName)
 	serviceName := getServiceName(service)
 	lbFrontendIPConfigName := getFrontendIPConfigName(service)
 	lbFrontendIPConfigID := az.getFrontendIPConfigID(lbName, lbFrontendIPConfigName)
@@ -993,4 +1016,12 @@ func requiresInternalLoadBalancer(service *v1.Service) bool {
 	}
 
 	return false
+}
+
+func getSubnetName(service *v1.Service) (bool, string) {
+	if l, ok := service.Annotations[ServiceAnnotationLoadBalancerInternalSubnet]; ok {
+		return true, l
+	}
+
+	return false, ""
 }
