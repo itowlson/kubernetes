@@ -35,6 +35,9 @@ import (
 // ServiceAnnotationLoadBalancerInternal is the annotation used on the service
 const ServiceAnnotationLoadBalancerInternal = "service.beta.kubernetes.io/azure-load-balancer-internal"
 
+// ServiceAnnotationLoadBalancerSubnet is the annotation used on the service
+const ServiceAnnotationLoadBalancerSubnet = "service.beta.kubernetes.io/azure-load-balancer-subnet"
+
 // GetLoadBalancer returns whether the specified load balancer exists, and
 // if so, what its status is.
 func (az *Cloud) GetLoadBalancer(clusterName string, service *v1.Service) (status *v1.LoadBalancerStatus, exists bool, err error) {
@@ -181,8 +184,13 @@ func (az *Cloud) EnsureLoadBalancer(clusterName string, service *v1.Service, nod
 	var lbIP *string
 	var fipConfigurationProperties *network.FrontendIPConfigurationPropertiesFormat
 
+	subnetSpecified, subnetName := getSubnetName(service)
+	if !subnetSpecified {
+		subnetName = az.SubnetName
+	}
+
 	if isInternal {
-		subnet, existsSubnet, err := az.getSubnet(az.VnetName, az.SubnetName)
+		subnet, existsSubnet, err := az.getSubnet(az.VnetName, subnetName)
 		if err != nil {
 			return nil, err
 		}
@@ -993,4 +1001,12 @@ func requiresInternalLoadBalancer(service *v1.Service) bool {
 	}
 
 	return false
+}
+
+func getSubnetName(service *v1.Service) (bool, string) {
+	if l, ok := service.Annotations[ServiceAnnotationLoadBalancerSubnet]; ok {
+		return true, l
+	}
+
+	return false, nil
 }
