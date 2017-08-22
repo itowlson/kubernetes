@@ -183,8 +183,11 @@ func getPrimaryIPConfig(nic network.Interface) (*network.InterfaceIPConfiguratio
 // Thus Azure do not allow mixed type (public and internal) load balancer.
 // So we'd have a separate name for internal load balancer.
 // This would be the name for Azure LoadBalancer resource.
-func getLoadBalancerName(clusterName string, isInternal bool) string {
+func getLoadBalancerName(clusterName string, isInternal bool, subnetSpecified bool, subnetName string) string {
 	if isInternal {
+		if subnetSpecified {
+			return fmt.Sprintf("%s-internal-%s", clusterName, subnetName)
+		}
 		return fmt.Sprintf("%s-internal", clusterName)
 	}
 
