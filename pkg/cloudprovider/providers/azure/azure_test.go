@@ -274,6 +274,33 @@ func TestReconcileSecurityWithSourceRanges(t *testing.T) {
 	validateSecurityGroup(t, sg, svc)
 }
 
+func TestExternalLoadBalancerIsNamedForCluster(t *testing.T) {
+	clusterName := "testcluster"
+	lbName := getLoadBalancerName(clusterName, false, false, "")
+	expectedLbName := clusterName
+	if lbName != expectedLbName {
+		t.Errorf("Load balancer name: expected %s, actual %s", expectedLbName, lbName)
+	}
+}
+
+func TestInternalLoadBalancerIsNamedForCluster(t *testing.T) {
+	clusterName := "testcluster"
+	lbName := getLoadBalancerName(clusterName, true, false, "")
+	expectedLbName := clusterName + "-internal"
+	if lbName != expectedLbName {
+		t.Errorf("Load balancer name: expected %s, actual %s", expectedLbName, lbName)
+	}
+}
+
+func TestInternalLoadBalanceOnSubnetIncludesSubnetName(t *testing.T) {
+	clusterName := "testcluster"
+	lbName := getLoadBalancerName(clusterName, true, true, "testsubnet")
+	expectedLbName := clusterName + "-internal-testsubnet"
+	if lbName != expectedLbName {
+		t.Errorf("Load balancer name: expected %s, actual %s", expectedLbName, lbName)
+	}
+}
+
 func getTestCloud() *Cloud {
 	return &Cloud{
 		Config: Config{
