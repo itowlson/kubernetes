@@ -90,7 +90,7 @@ func (az *Cloud) GetLoadBalancer(clusterName string, service *v1.Service) (statu
 	}
 
 	return &v1.LoadBalancerStatus{
-		Ingress: []v1.LoadBalancerIngress{{IP: *lbIP}},
+		Ingress: []v1.LoadBalancerIngress{{IP: *lbIP, Hostname: lbName}},
 	}, true, nil
 }
 
@@ -297,7 +297,7 @@ func (az *Cloud) EnsureLoadBalancer(clusterName string, service *v1.Service, nod
 	}
 
 	return &v1.LoadBalancerStatus{
-		Ingress: []v1.LoadBalancerIngress{{IP: *lbIP}},
+		Ingress: []v1.LoadBalancerIngress{{IP: *lbIP, Hostname: lbName}},
 	}, nil
 }
 
