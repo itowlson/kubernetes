@@ -764,14 +764,23 @@ func TestNewCloudFromJSON(t *testing.T) {
 		"cloudProviderRateLimitQPS": 0.5,
 		"cloudProviderRateLimitBucket": 5
 	}`
-	validateConfig(t, config)
+	validateConfigTestValues(t, config)
 }
 
 // Test Backoff and Rate Limit defaults (json)
 func TestCloudDefaultConfigFromJSON(t *testing.T) {
 	config := `{
-                "aadClientId": "--aad-client-id--",
-                "aadClientSecret": "--aad-client-secret--"
+		"tenantId": "--tenant-id--",
+		"subscriptionId": "--subscription-id--",
+		"aadClientId": "--aad-client-id--",
+		"aadClientSecret": "--aad-client-secret--",
+		"aadClientCertPath": "--aad-client-cert-path--",
+		"aadClientCertPassword": "--aad-client-cert-password--",
+		"resourceGroup": "--resource-group--",
+		"location": "--location--",
+		"subnetName": "--subnet-name--",
+		"securityGroupName": "--security-group-name--",
+		"vnetName": "--vnet-name--"
         }`
 
 	validateEmptyConfig(t, config)
@@ -780,8 +789,17 @@ func TestCloudDefaultConfigFromJSON(t *testing.T) {
 // Test Backoff and Rate Limit defaults (yaml)
 func TestCloudDefaultConfigFromYAML(t *testing.T) {
 	config := `
+tenantId: --tenant-id--
+subscriptionId: --subscription-id--
 aadClientId: --aad-client-id--
 aadClientSecret: --aad-client-secret--
+aadClientCertPath: --aad-client-cert-path--
+aadClientCertPassword: --aad-client-cert-password--
+resourceGroup: --resource-group--
+location: --location--
+subnetName: --subnet-name--
+securityGroupName: --security-group-name--
+vnetName: --vnet-name--
 `
 	validateEmptyConfig(t, config)
 }
@@ -811,10 +829,10 @@ cloudProviderRatelimit: true
 cloudProviderRateLimitQPS: 0.5
 cloudProviderRateLimitBucket: 5
 `
-	validateConfig(t, config)
+	validateConfigTestValues(t, config)
 }
 
-func validateConfig(t *testing.T, config string) {
+func validateConfigTestValues(t *testing.T, config string) {
 	azureCloud := getCloudFromConfig(t, config)
 
 	if azureCloud.TenantID != "--tenant-id--" {
@@ -1050,4 +1068,99 @@ func addTestSubnet(t *testing.T, svc *v1.Service) {
 		t.Error("Subnet added to non-internal service")
 	}
 	svc.Annotations[ServiceAnnotationLoadBalancerInternalSubnet] = "TestSubnet"
+}
+
+func createFullConfig() Config {
+	return Config{
+		Cloud:                        "Azure",
+		TenantID:                     "contoso",
+		SubscriptionID:               "12345678",
+		ResourceGroup:                "rg",
+		Location:                     "contosoland",
+		VnetName:                     "contosonet",
+		VnetResourceGroup:            "vnetrg",
+		SubnetName:                   "subnet",
+		SecurityGroupName:            "sg",
+		RouteTableName:               "rt",
+		PrimaryAvailabilitySetName:   "as",
+		AADClientID:                  "appid",
+		AADClientSecret:              "s3kr!t",
+		AADClientCertPath:            "/certs/cert",
+		AADClientCertPassword:        "4ls0s3kr!t",
+		CloudProviderBackoff:         true,
+		CloudProviderBackoffRetries:  3,
+		CloudProviderBackoffExponent: 1.2,
+		CloudProviderBackoffDuration: 7,
+		CloudProviderBackoffJitter:   0.4,
+		CloudProviderRateLimit:       true,
+		CloudProviderRateLimitQPS:    123.45,
+		CloudProviderRateLimitBucket: 4,
+		UseInstanceMetadata:          true,
+		UseManagedIdentityExtension:  true,
+	}
+}
+
+func TestIfAllConfigFieldsPresentThenItIsValid(t *testing.T) {
+	c := createFullConfig()
+	err := validateConfig(&c)
+	if err != nil {
+		t.Errorf("Config was valid but reported error %v", err)
+	}
+}
+
+func isOptionalConfigField(f reflect.StructField) bool {
+	// TODO: use struct field tags for this?
+	optionalFields := []string{
+		"Cloud",
+		"VnetResourceGroup",
+		"RouteTableName",
+		"PrimaryAvailabilitySetName",
+		"CloudProviderBackoffRetries",
+		"CloudProviderBackoffExponent",
+		"CloudProviderBackoffDuration",
+		"CloudProviderBackoffJitter",
+		"CloudProviderRateLimitQPS",
+		"CloudProviderRateLimitBucket",
+	}
+	for _, o := range optionalFields {
+		if f.Name == o {
+			return true
+		}
+	}
+	return false
+}
+
+func TestIfConfigIsMissingFieldThenItIsInvalidIfAndOnlyIfRequired(t *testing.T) {
+	tc := reflect.TypeOf(Config{})
+	for i := 0; i < tc.NumField(); i++ {
+		f := tc.Field(i)
+		c := createFullConfig()
+		rv := reflect.ValueOf(&c).Elem()
+		fv := rv.FieldByName(f.Name)
+		switch fv.Interface().(type) {
+		case string:
+			fv.SetString("")
+		case int:
+			fv.SetInt(0)
+		case float32:
+			fv.SetFloat(0)
+		case float64:
+			fv.SetFloat(0)
+		case bool:
+			continue // can't distinguish between omitted and false, and false is valid!
+		default:
+			t.Errorf("Can't test field %s with type %s", f.Name, f.Type.Name())
+			continue
+		}
+		err := validateConfig(&c)
+		if isOptionalConfigField(f) {
+			if err != nil {
+				t.Errorf("Config had valid empty %s field but reported error %v", f.Name, err)
+			}
+		} else {
+			if err == nil {
+				t.Errorf("Config had empty %s field but did not report error", f.Name)
+			}
+		}
+	}
 }

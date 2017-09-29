@@ -69,6 +69,7 @@ type Config struct {
 	// The name of the VNet that the cluster is deployed in
 	VnetName string `json:"vnetName" yaml:"vnetName"`
 	// The name of the resource group that the Vnet is deployed in
+	// If omitted, this defaults to ResourceGroup
 	VnetResourceGroup string `json:"vnetResourceGroup" yaml:"vnetResourceGroup"`
 	// The name of the subnet that the cluster is deployed in
 	SubnetName string `json:"subnetName" yaml:"subnetName"`
@@ -204,6 +205,10 @@ func GetServicePrincipalToken(config *Config, env *azure.Environment) (*adal.Ser
 // NewCloud returns a Cloud with initialized clients
 func NewCloud(configReader io.Reader) (cloudprovider.Interface, error) {
 	config, env, err := ParseConfig(configReader)
+	if err != nil {
+		return nil, err
+	}
+	err = validateConfig(config)
 	if err != nil {
 		return nil, err
 	}
@@ -356,6 +361,48 @@ func ParseConfig(configReader io.Reader) (*Config, *azure.Environment, error) {
 		}
 	}
 	return &config, &env, nil
+}
+
+func validateConfig(config *Config) error {
+	missing := func(s string) error {
+		return fmt.Errorf("Missing %s in cloud config", s)
+	}
+	if config.TenantID == "" {
+		return missing("tenantId")
+	}
+	// TODO: can we validate the value?
+	if config.SubscriptionID == "" {
+		return missing("subscriptionId")
+	}
+	// TODO: should we validate the value (e.g. as UUID)?
+	if config.ResourceGroup == "" {
+		return missing("resourceGroup")
+	}
+	if config.Location == "" {
+		return missing("location")
+	}
+	if config.VnetName == "" {
+		return missing("vnetName")
+	}
+	if config.SubnetName == "" {
+		return missing("subnetName")
+	}
+	if config.SecurityGroupName == "" {
+		return missing("securityGroupName")
+	}
+	if config.AADClientID == "" {
+		return missing("aadClientId")
+	}
+	if config.AADClientSecret == "" {
+		return missing("aadClientSecret")
+	}
+	if config.AADClientCertPath == "" {
+		return missing("aadClientCertPath")
+	}
+	if config.AADClientCertPassword == "" {
+		return missing("aadClientCertPassword")
+	}
+	return nil
 }
 
 // Initialize passes a Kubernetes clientBuilder interface to the cloud provider
