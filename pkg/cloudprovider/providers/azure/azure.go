@@ -88,9 +88,9 @@ type Config struct {
 	AADClientID string `json:"aadClientId" yaml:"aadClientId"`
 	// The ClientSecret for an AAD application with RBAC access to talk to Azure RM APIs
 	AADClientSecret string `json:"aadClientSecret" yaml:"aadClientSecret"`
-	// The path of a client certificate for an AAD application with RBAC access to talk to Azure RM APIs
+	// (Optional) The path of a client certificate for an AAD application with RBAC access to talk to Azure RM APIs
 	AADClientCertPath string `json:"aadClientCertPath" yaml:"aadClientCertPath"`
-	// The password of the client certificate for an AAD application with RBAC access to talk to Azure RM APIs
+	// (Optional) The password of the client certificate for an AAD application with RBAC access to talk to Azure RM APIs
 	AADClientCertPassword string `json:"aadClientCertPassword" yaml:"aadClientCertPassword"`
 	// Enable exponential backoff to manage resource request retries
 	CloudProviderBackoff bool `json:"cloudProviderBackoff" yaml:"cloudProviderBackoff"`
@@ -210,6 +210,7 @@ func NewCloud(configReader io.Reader) (cloudprovider.Interface, error) {
 	}
 	err = validateConfig(config)
 	if err != nil {
+		glog.V(1).Infof("The cloud-config file was malformed or was missing data: %v", err)
 		return nil, err
 	}
 	az := Cloud{
@@ -395,12 +396,6 @@ func validateConfig(config *Config) error {
 	}
 	if config.AADClientSecret == "" {
 		return missing("aadClientSecret")
-	}
-	if config.AADClientCertPath == "" {
-		return missing("aadClientCertPath")
-	}
-	if config.AADClientCertPassword == "" {
-		return missing("aadClientCertPassword")
 	}
 	return nil
 }

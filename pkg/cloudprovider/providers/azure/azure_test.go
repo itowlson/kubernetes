@@ -1114,6 +1114,8 @@ func isOptionalConfigField(f reflect.StructField) bool {
 		"Cloud",
 		"VnetResourceGroup",
 		"RouteTableName",
+		"AADClientCertPath",
+		"AADClientCertPassword",
 		"PrimaryAvailabilitySetName",
 		"CloudProviderBackoffRetries",
 		"CloudProviderBackoffExponent",
