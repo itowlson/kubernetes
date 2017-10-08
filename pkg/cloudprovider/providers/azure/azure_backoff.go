@@ -102,11 +102,11 @@ func (az *Cloud) CreateOrUpdateLBWithRetry(lb network.LoadBalancer) error {
 }
 
 // CreateOrUpdatePIPWithRetry invokes az.PublicIPAddressesClient.CreateOrUpdate with exponential backoff retry
-func (az *Cloud) CreateOrUpdatePIPWithRetry(pip network.PublicIPAddress) error {
+func (az *Cloud) CreateOrUpdatePIPWithRetry(pip network.PublicIPAddress, pipResourceGroup string) error {
 	return wait.ExponentialBackoff(az.resourceRequestBackoff, func() (bool, error) {
 		az.operationPollRateLimiter.Accept()
 		glog.V(10).Infof("PublicIPAddressesClient.CreateOrUpdate(%s): start", *pip.Name)
-		respChan, errChan := az.PublicIPAddressesClient.CreateOrUpdate(az.ResourceGroup, *pip.Name, pip, nil)
+		respChan, errChan := az.PublicIPAddressesClient.CreateOrUpdate(pipResourceGroup, *pip.Name, pip, nil)
 		resp := <-respChan
 		err := <-errChan
 		glog.V(10).Infof("PublicIPAddressesClient.CreateOrUpdate(%s): end", *pip.Name)
@@ -128,11 +128,11 @@ func (az *Cloud) CreateOrUpdateInterfaceWithRetry(nic network.Interface) error {
 }
 
 // DeletePublicIPWithRetry invokes az.PublicIPAddressesClient.Delete with exponential backoff retry
-func (az *Cloud) DeletePublicIPWithRetry(pipName string) error {
+func (az *Cloud) DeletePublicIPWithRetry(pipName string, pipResourceGroup string) error {
 	return wait.ExponentialBackoff(az.resourceRequestBackoff, func() (bool, error) {
 		az.operationPollRateLimiter.Accept()
 		glog.V(10).Infof("PublicIPAddressesClient.Delete(%s): start", pipName)
-		respChan, errChan := az.PublicIPAddressesClient.Delete(az.ResourceGroup, pipName, nil)
+		respChan, errChan := az.PublicIPAddressesClient.Delete(pipResourceGroup, pipName, nil)
 		resp := <-respChan
 		err := <-errChan
 		glog.V(10).Infof("PublicIPAddressesClient.Delete(%s): end", pipName)
