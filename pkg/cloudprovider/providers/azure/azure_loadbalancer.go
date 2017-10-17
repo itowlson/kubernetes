@@ -39,6 +39,10 @@ const ServiceAnnotationLoadBalancerInternal = "service.beta.kubernetes.io/azure-
 // to specify what subnet it is exposed on
 const ServiceAnnotationLoadBalancerInternalSubnet = "service.beta.kubernetes.io/azure-load-balancer-internal-subnet"
 
+// ServiceAnnotationLoadBalancerUseIPv6 is the annotation used on the service
+// to specify that it should be exposed over IPv6
+const ServiceAnnotationLoadBalancerUseIPv6 = "service.beta.kubernetes.io/azure-load-balancer-use-ipv6"
+
 // GetLoadBalancer returns whether the specified load balancer exists, and
 // if so, what its status is.
 func (az *Cloud) GetLoadBalancer(clusterName string, service *v1.Service) (status *v1.LoadBalancerStatus, exists bool, err error) {
@@ -1022,4 +1026,12 @@ func subnet(service *v1.Service) *string {
 	}
 
 	return nil
+}
+
+func useIPv6(service *v1.Service) bool {
+	if l, ok := service.Annotations[ServiceAnnotationLoadBalancerUseIPv6]; ok {
+		return l == "true"
+	}
+
+	return false
 }

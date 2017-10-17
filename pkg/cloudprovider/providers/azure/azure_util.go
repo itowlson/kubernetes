@@ -219,7 +219,11 @@ func getRulePrefix(service *v1.Service) string {
 }
 
 func getPublicIPName(clusterName string, service *v1.Service) string {
-	return fmt.Sprintf("%s-%s", clusterName, cloudprovider.GetLoadBalancerName(service))
+	baseName := fmt.Sprintf("%s-%s", clusterName, cloudprovider.GetLoadBalancerName(service))
+	if useIPv6(service) {
+		return fmt.Sprintf("%s-ipv6", baseName)
+	}
+	return baseName
 }
 
 func serviceOwnsRule(service *v1.Service, rule string) bool {
