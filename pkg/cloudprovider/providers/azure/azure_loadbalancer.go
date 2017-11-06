@@ -890,6 +890,12 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 				// it's kind of like we want to virtualise the 'private' rules
 				// over the shared rule, preserving the same ownership conventions
 				// via metadata or something
+				//
+				// We almost want to disassemble all existing shared rules into a bunch of
+				// 'if we had our druthers' pseudo-rules, then reconcile, then reassemble
+				//
+				// We can't use tags to track who is using e.g. a source address prefix
+				// because there aren't enough available (15 tags x 256 chars/tag)
 			} else {
 				// create the rule
 			}
