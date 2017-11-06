@@ -834,8 +834,7 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 			sourceAddressPrefixes = append(sourceAddressPrefixes, ip.String())
 		}
 	}
-	expectedPrivateSecurityRules := make([]network.SecurityRule, len(ports)*len(sourceAddressPrefixes))
-	expectedSharedRuleEntries := make([]something, somethingElse)
+	expectedSecurityRules := make([]network.SecurityRule, len(ports)*len(sourceAddressPrefixes))
 
 	// if we are participating in a shared rule, reconcile that rule
 	// else do the previous logic
@@ -845,6 +844,9 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 	// (or vice versa?)
 	// NOTE ALSO: need to test the case where the existing rule is any->any and
 	// it is edited to a shared rule
+	// THOUGHT: this might be easier if we allowed at most one shared rule so
+	// we didn't have to look at multiple rules?
+	isSharedRule := sharesSecurityRule(service)
 	for i, port := range ports {
 		_, securityProto, _, err := getProtocolsFromKubernetesProtocol(port.Protocol)
 		if err != nil {
@@ -852,7 +854,7 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 		}
 		for j := range sourceAddressPrefixes {
 			ix := i*len(sourceAddressPrefixes) + j
-			securityRuleName, isSharedRule := getSecurityRuleName(service, port, sourceAddressPrefixes[j])
+			securityRuleName := getSecurityRuleName(service, port, sourceAddressPrefixes[j])
 			expectedSecurityRules[ix] = network.SecurityRule{
 				Name: to.StringPtr(securityRuleName),
 				SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
@@ -874,43 +876,67 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 	if sg.SecurityRules != nil {
 		updatedRules = *sg.SecurityRules
 	}
-	// update security rules: remove unwanted
-	for i := len(updatedRules) - 1; i >= 0; i-- {
-		existingRule := updatedRules[i]
-		if serviceOwnsRule(service, *existingRule.Name) {
-			glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - considering evicting", serviceName, wantLb, *existingRule.Name)
-			keepRule := false
-			if findSecurityRule(expectedSecurityRules, existingRule) {
-				glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - keeping", serviceName, wantLb, *existingRule.Name)
-				keepRule = true
+
+	if isSharedRule {
+
+		if updatedRules == nil || len(updatedRules) == 0 {
+			// updatedRules = makeanewsharedrule()
+		} else {
+			// there are existing rules
+			if aRuleWithThisNameExists() {
+				// reconcile it
+				// TODO: how do we remove the old values?  We need to tag
+				// each value with which service owns it which seems impractical...
+				// it's kind of like we want to virtualise the 'private' rules
+				// over the shared rule, preserving the same ownership conventions
+				// via metadata or something
+			} else {
+				// create the rule
 			}
-			if !keepRule {
-				glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - dropping", serviceName, wantLb, *existingRule.Name)
-				updatedRules = append(updatedRules[:i], updatedRules[i+1:]...)
+		}
+
+	} else {
+
+		// update security rules: remove unwanted
+		for i := len(updatedRules) - 1; i >= 0; i-- {
+			existingRule := updatedRules[i]
+			if serviceOwnsRule(service, *existingRule.Name) {
+				glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - considering evicting", serviceName, wantLb, *existingRule.Name)
+				keepRule := false
+				if findSecurityRule(expectedSecurityRules, existingRule) {
+					glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - keeping", serviceName, wantLb, *existingRule.Name)
+					keepRule = true
+				}
+				if !keepRule {
+					glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - dropping", serviceName, wantLb, *existingRule.Name)
+					updatedRules = append(updatedRules[:i], updatedRules[i+1:]...)
+					dirtySg = true
+				}
+			}
+		}
+		// update security rules: add needed
+		for _, expectedRule := range expectedSecurityRules {
+			foundRule := false
+			if findSecurityRule(updatedRules, expectedRule) {
+				glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - already exists", serviceName, wantLb, *expectedRule.Name)
+				foundRule = true
+			}
+			if !foundRule {
+				glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - adding", serviceName, wantLb, *expectedRule.Name)
+
+				nextAvailablePriority, err := getNextAvailablePriority(updatedRules)
+				if err != nil {
+					return sg, false, err
+				}
+
+				expectedRule.Priority = to.Int32Ptr(nextAvailablePriority)
+				updatedRules = append(updatedRules, expectedRule)
 				dirtySg = true
 			}
 		}
-	}
-	// update security rules: add needed
-	for _, expectedRule := range expectedSecurityRules {
-		foundRule := false
-		if findSecurityRule(updatedRules, expectedRule) {
-			glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - already exists", serviceName, wantLb, *expectedRule.Name)
-			foundRule = true
-		}
-		if !foundRule {
-			glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - adding", serviceName, wantLb, *expectedRule.Name)
 
-			nextAvailablePriority, err := getNextAvailablePriority(updatedRules)
-			if err != nil {
-				return sg, false, err
-			}
-
-			expectedRule.Priority = to.Int32Ptr(nextAvailablePriority)
-			updatedRules = append(updatedRules, expectedRule)
-			dirtySg = true
-		}
 	}
+
 	if dirtySg {
 		sg.SecurityRules = &updatedRules
 	}
