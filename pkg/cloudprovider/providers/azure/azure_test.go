@@ -487,7 +487,7 @@ func getTestSecurityGroup(services ...v1.Service) network.SecurityGroup {
 		for _, port := range service.Spec.Ports {
 			sources := getServiceSourceRanges(&service)
 			for _, src := range sources {
-				ruleName := getSecurityRuleName(&service, port, src)
+				ruleName, _ := getSecurityRuleName(&service, port, src)
 				rules = append(rules, network.SecurityRule{
 					Name: to.StringPtr(ruleName),
 					SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
@@ -635,19 +635,73 @@ func describeFIPs(frontendIPs []network.FrontendIPConfiguration) string {
 	return description
 }
 
+func contains(ruleValues []string, targetValue string) bool {
+	for _, ruleValue := range ruleValues {
+		if strings.EqualFold(ruleValue, targetValue) {
+			return true
+		}
+	}
+	return false
+}
+
+func securityRuleMatches(serviceSourceRange string, servicePort v1.ServicePort, serviceIP string, securityRule network.SecurityRule) error {
+	ruleSource := securityRule.SourceAddressPrefixes
+	if ruleSource == nil || len(*ruleSource) == 0 {
+		if securityRule.SourceAddressPrefix == nil {
+			ruleSource = &[]string{}
+		} else {
+			ruleSource = &[]string{*securityRule.SourceAddressPrefix}
+		}
+	}
+
+	rulePorts := securityRule.DestinationPortRanges
+	if rulePorts == nil || len(*rulePorts) == 0 {
+		if securityRule.DestinationPortRange == nil {
+			rulePorts = &[]string{}
+		} else {
+			rulePorts = &[]string{*securityRule.DestinationPortRange}
+		}
+	}
+
+	ruleDestination := securityRule.DestinationAddressPrefixes
+	if ruleDestination == nil || len(*ruleDestination) == 0 {
+		if securityRule.DestinationAddressPrefix == nil {
+			ruleDestination = &[]string{}
+		} else {
+			ruleDestination = &[]string{*securityRule.DestinationAddressPrefix}
+		}
+	}
+
+	if !contains(*ruleSource, serviceSourceRange) {
+		return fmt.Errorf("Rule does not contain source %s", serviceSourceRange)
+	}
+
+	if !contains(*rulePorts, fmt.Sprintf("%d", servicePort.Port)) {
+		return fmt.Errorf("Rule does not contain port %d", servicePort.Port)
+	}
+
+	if serviceIP != "" && !contains(*ruleDestination, serviceIP) {
+		return fmt.Errorf("Rule does not contain destination %s", serviceIP)
+	}
+
+	return nil
+}
+
 func validateSecurityGroup(t *testing.T, securityGroup network.SecurityGroup, services ...v1.Service) {
-	expectedRuleCount := 0
+	seenRules := make(map[string]string)
 	for _, svc := range services {
 		for _, wantedRule := range svc.Spec.Ports {
 			sources := getServiceSourceRanges(&svc)
 			for _, source := range sources {
-				wantedRuleName := getSecurityRuleName(&svc, wantedRule, source)
-				expectedRuleCount++
+				wantedRuleName, _ := getSecurityRuleName(&svc, wantedRule, source)
+				seenRules[wantedRuleName] = wantedRuleName
 				foundRule := false
 				for _, actualRule := range *securityGroup.SecurityRules {
-					if strings.EqualFold(*actualRule.Name, wantedRuleName) &&
-						*actualRule.SourceAddressPrefix == source &&
-						*actualRule.DestinationPortRange == fmt.Sprintf("%d", wantedRule.Port) {
+					if strings.EqualFold(*actualRule.Name, wantedRuleName) {
+						err := securityRuleMatches(source, wantedRule, svc.Spec.LoadBalancerIP, actualRule)
+						if err != nil {
+							t.Errorf("Found matching security rule %q but properties were incorrect: %v", wantedRuleName, err)
+						}
 						foundRule = true
 						break
 					}
@@ -660,6 +714,7 @@ func validateSecurityGroup(t *testing.T, securityGroup network.SecurityGroup, se
 	}
 
 	lenRules := len(*securityGroup.SecurityRules)
+	expectedRuleCount := len(seenRules)
 	if lenRules != expectedRuleCount {
 		t.Errorf("Expected the loadbalancer to have %d rules. Found %d.\n", expectedRuleCount, lenRules)
 	}
@@ -1051,3 +1106,89 @@ func addTestSubnet(t *testing.T, svc *v1.Service) {
 	}
 	svc.Annotations[ServiceAnnotationLoadBalancerInternalSubnet] = "TestSubnet"
 }
+
+func findSecurityRuleByName(sg network.SecurityGroup, ruleName string) *network.SecurityRule {
+	for _, rule := range *sg.SecurityRules {
+		if strings.EqualFold(*rule.Name, ruleName) {
+			return &rule
+		}
+	}
+	return nil
+}
+
+func TestIfServiceSpecifiesSharedRuleAndRuleDoesNotExistItIsCreated(t *testing.T) {
+	ruleName := "sharedsr"
+	az := getTestCloud()
+	svc := getTestService("servicesr", v1.ProtocolTCP, 80)
+	svc.Spec.LoadBalancerIP = "192.168.77.88"
+	svc.Annotations[ServiceAnnotationSharedSecurityRule] = ruleName
+
+	sg := getTestSecurityGroup()
+
+	sg, _, err := az.reconcileSecurityGroup(sg, testClusterName, &svc, to.StringPtr(svc.Spec.LoadBalancerIP), true)
+	if err != nil {
+		t.Errorf("Unexpected error: %q", err)
+	}
+
+	validateSecurityGroup(t, sg, svc)
+
+	securityRule := findSecurityRuleByName(sg, ruleName)
+	if securityRule == nil {
+		t.Fatalf("Expected security rule %q but it was not present", ruleName)
+	}
+
+	// TODO: is it useful to make further assertions about securityRule?
+}
+
+func TestIfServiceSpecifiesSharedRuleAndRuleExistsThenTheServicesPortAndAddressAreAdded(t *testing.T) {
+	ruleName := "sharedsr"
+	az := getTestCloud()
+	svc := getTestService("servicesr", v1.ProtocolTCP, 80)
+	svc.Spec.LoadBalancerIP = "192.168.77.88"
+	svc.Annotations[ServiceAnnotationSharedSecurityRule] = ruleName
+
+	sg := getTestSecurityGroup()
+	sg.SecurityRules = &[]network.SecurityRule{
+		network.SecurityRule{
+			Name: &ruleName,
+			SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
+				SourceAddressPrefixes:      &[]string{"Internet"},
+				DestinationPortRanges:      &[]string{"8080"},
+				DestinationAddressPrefixes: &[]string{"192.168.33.44"},
+			},
+		},
+	}
+
+	sg, _, err := az.reconcileSecurityGroup(sg, testClusterName, &svc, to.StringPtr(svc.Spec.LoadBalancerIP), true)
+	if err != nil {
+		t.Errorf("Unexpected error: %q", err)
+	}
+
+	validateSecurityGroup(t, sg, svc)
+
+	securityRule := findSecurityRuleByName(sg, ruleName)
+	if securityRule == nil {
+		t.Fatalf("Expected security rule %q but it was not present", ruleName)
+	}
+
+	err = securityRuleMatches("Internet", v1.ServicePort{Port: 8080}, "192.168.33.44", *securityRule)
+	if err != nil {
+		t.Errorf("Shared rule no longer matched existing definition: %v", err)
+	}
+}
+
+// func TestIfServiceSpecifiesSharedRuleAndServiceIsDeletedThenTheServicesPortAndAddressAreRemoved(t *testing.T) {
+// 	t.Error()
+// }
+
+// func TestIfServiceSpecifiesSharedRuleAndLastServiceIsDeletedThenRuleIsDeleted(t *testing.T) {
+// 	t.Error()
+// }
+
+// func TestIfServiceIsEditedFromOwnRuleToSharedRuleThenOwnRuleIsDeletedAndSharedRuleIsCreated(t *testing.T) {
+// 	t.Error()
+// }
+
+// func TestIfServiceIsEditedFromSharedRuleToOwnRuleThenItIsRemovedFromSharedRuleAndOwnRuleIsCreated(t *testing.T) {
+// 	t.Error()
+// }

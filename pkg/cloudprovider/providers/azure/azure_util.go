@@ -202,9 +202,13 @@ func getLoadBalancerRuleName(service *v1.Service, port v1.ServicePort, subnetNam
 	return fmt.Sprintf("%s-%s-%s-%d", getRulePrefix(service), *subnetName, port.Protocol, port.Port)
 }
 
-func getSecurityRuleName(service *v1.Service, port v1.ServicePort, sourceAddrPrefix string) string {
+func getSecurityRuleName(service *v1.Service, port v1.ServicePort, sourceAddrPrefix string) (string, bool) {
+	sharedRuleName := sharedSecurityRuleName(service)
+	if sharedRuleName != nil {
+		return *sharedRuleName, true
+	}
 	safePrefix := strings.Replace(sourceAddrPrefix, "/", "_", -1)
-	return fmt.Sprintf("%s-%s-%d-%s", getRulePrefix(service), port.Protocol, port.Port, safePrefix)
+	return fmt.Sprintf("%s-%s-%d-%s", getRulePrefix(service), port.Protocol, port.Port, safePrefix), false
 }
 
 // This returns a human-readable version of the Service used to tag some resources.

@@ -39,6 +39,14 @@ const ServiceAnnotationLoadBalancerInternal = "service.beta.kubernetes.io/azure-
 // to specify what subnet it is exposed on
 const ServiceAnnotationLoadBalancerInternalSubnet = "service.beta.kubernetes.io/azure-load-balancer-internal-subnet"
 
+// ServiceAnnotationSharedSecurityRule is the annotation used on the service
+// to specify that the service should be exposed using an Azure security rule
+// that may be shared with other service, trading specificity of rules for an
+// increase in the number of services that can be exposed. This relies on the
+// Azure "augmented security rules" feature which at the time of writing is in
+// preview and available only in certain regions.
+const ServiceAnnotationSharedSecurityRule = "service.beta.kubernetes.io/azure-shared-securityrule"
+
 // GetLoadBalancer returns whether the specified load balancer exists, and
 // if so, what its status is.
 func (az *Cloud) GetLoadBalancer(clusterName string, service *v1.Service) (status *v1.LoadBalancerStatus, exists bool, err error) {
@@ -826,8 +834,17 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 			sourceAddressPrefixes = append(sourceAddressPrefixes, ip.String())
 		}
 	}
-	expectedSecurityRules := make([]network.SecurityRule, len(ports)*len(sourceAddressPrefixes))
+	expectedPrivateSecurityRules := make([]network.SecurityRule, len(ports)*len(sourceAddressPrefixes))
+	expectedSharedRuleEntries := make([]something, somethingElse)
 
+	// if we are participating in a shared rule, reconcile that rule
+	// else do the previous logic
+	// ISSUE: what if we are in an edit situation where we are transitioning
+	// FROM a shared rule TO a standalone rule?  How do we locate the shared rule?
+	// By finding the IP address in its list?
+	// (or vice versa?)
+	// NOTE ALSO: need to test the case where the existing rule is any->any and
+	// it is edited to a shared rule
 	for i, port := range ports {
 		_, securityProto, _, err := getProtocolsFromKubernetesProtocol(port.Protocol)
 		if err != nil {
@@ -835,7 +852,7 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 		}
 		for j := range sourceAddressPrefixes {
 			ix := i*len(sourceAddressPrefixes) + j
-			securityRuleName := getSecurityRuleName(service, port, sourceAddressPrefixes[j])
+			securityRuleName, isSharedRule := getSecurityRuleName(service, port, sourceAddressPrefixes[j])
 			expectedSecurityRules[ix] = network.SecurityRule{
 				Name: to.StringPtr(securityRuleName),
 				SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
@@ -1038,6 +1055,14 @@ func subnet(service *v1.Service) *string {
 		if l, ok := service.Annotations[ServiceAnnotationLoadBalancerInternalSubnet]; ok {
 			return &l
 		}
+	}
+
+	return nil
+}
+
+func sharedSecurityRuleName(service *v1.Service) *string {
+	if l, ok := service.Annotations[ServiceAnnotationSharedSecurityRule]; ok {
+		return &l
 	}
 
 	return nil
