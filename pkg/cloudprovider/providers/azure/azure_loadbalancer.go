@@ -890,6 +890,11 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 			glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - already exists", serviceName, wantLb, *expectedRule.Name)
 			foundRule = true
 		}
+		if foundRule && allowsConsolidation(expectedRule) {
+			index, _ := findConsolidationCandidate(updatedRules, expectedRule)
+			updatedRules[index] = consolidate(updatedRules[index], expectedRule)
+			dirtySg = true
+		}
 		if !foundRule {
 			glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - adding", serviceName, wantLb, *expectedRule.Name)
 
@@ -904,7 +909,7 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 		}
 	}
 
-	updatedRules = consolidateSharedRules(updatedRules)
+	//updatedRules = consolidateSharedRules(updatedRules)
 
 	if dirtySg {
 		sg.SecurityRules = &updatedRules
