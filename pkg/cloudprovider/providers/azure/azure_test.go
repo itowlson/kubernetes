@@ -1195,9 +1195,64 @@ func TestIfServiceSpecifiesSharedRuleAndRuleExistsThenTheServicesPortAndAddressA
 	}
 }
 
-// func TestIfServiceSpecifiesSharedRuleAndServiceIsDeletedThenTheServicesPortAndAddressAreRemoved(t *testing.T) {
-// 	t.Error()
-// }
+func TestIfServiceSpecifiesSharedRuleAndServiceIsDeletedThenTheServicesPortAndAddressAreRemoved(t *testing.T) {
+	az := getTestCloud()
+	svc := getTestService("servicesr", v1.ProtocolTCP, 80)
+	svc.Spec.LoadBalancerIP = "192.168.77.88"
+	svc.Annotations[ServiceAnnotationSharedSecurityRule] = "true"
+
+	expectedRuleName := "shared-TCP-80-Internet"
+
+	sg := getTestSecurityGroup()
+	sg.SecurityRules = &[]network.SecurityRule{
+		network.SecurityRule{
+			Name: &expectedRuleName,
+			SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
+				Protocol:                 network.SecurityRuleProtocolTCP,
+				SourcePortRange:          to.StringPtr("*"),
+				SourceAddressPrefix:      to.StringPtr("Internet"),
+				DestinationPortRange:     to.StringPtr("80"),
+				DestinationAddressPrefix: to.StringPtr("192.168.33.44"),
+				Access:    network.SecurityRuleAccessAllow,
+				Direction: network.SecurityRuleDirectionInbound,
+			},
+		},
+	}
+
+	sg, _, err := az.reconcileSecurityGroup(sg, testClusterName, &svc, to.StringPtr(svc.Spec.LoadBalancerIP), true)
+	if err != nil {
+		t.Errorf("Unexpected error: %q", err)
+	}
+
+	validateSecurityGroup(t, sg, svc)
+
+	sg, _, err = az.reconcileSecurityGroup(sg, testClusterName, &svc, to.StringPtr(svc.Spec.LoadBalancerIP), false)
+	if err != nil {
+		t.Errorf("Unexpected error: %q", err)
+	}
+
+	validateSecurityGroup(t, sg, svc)
+
+	securityRule := findSecurityRuleByName(sg, expectedRuleName)
+	if securityRule == nil {
+		t.Fatalf("Expected security rule %q but it was not present", expectedRuleName)
+	}
+
+	expectedDestinationIPCount := 1
+	if len(*securityRule.DestinationAddressPrefixes) != expectedDestinationIPCount {
+		t.Errorf("Shared rule should have had %d destination IP addresses but had %d", expectedDestinationIPCount, len(*securityRule.DestinationAddressPrefixes))
+	}
+
+	err = securityRuleMatches("Internet", v1.ServicePort{Port: 80}, "192.168.33.44", *securityRule)
+	if err != nil {
+		t.Errorf("Shared rule no longer matched other service IP: %v", err)
+	}
+
+	err = securityRuleMatches("Internet", v1.ServicePort{Port: 80}, "192.168.77.88", *securityRule)
+	if err == nil {
+		t.Error("Shared rule was not updated to remove deleted service IP")
+	}
+}
 
 // func TestIfServiceSpecifiesSharedRuleAndLastServiceIsDeletedThenRuleIsDeleted(t *testing.T) {
 // 	t.Error()
