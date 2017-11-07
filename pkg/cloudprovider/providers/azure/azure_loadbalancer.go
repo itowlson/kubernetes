@@ -866,7 +866,8 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 		updatedRules = *sg.SecurityRules
 	}
 
-	// update security rules: remove unwanted
+	// update security rules: remove unwanted rules that belong privately
+	// to this service
 	for i := len(updatedRules) - 1; i >= 0; i-- {
 		existingRule := updatedRules[i]
 		if serviceOwnsRule(service, *existingRule.Name) {
@@ -881,6 +882,12 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 				updatedRules = append(updatedRules[:i], updatedRules[i+1:]...)
 				dirtySg = true
 			}
+		}
+	}
+	// update security rules: prepare any existing rules for consolidation
+	for index, rule := range updatedRules {
+		if allowsConsolidation(rule) {
+			updatedRules[index] = makeConsolidatable(rule)
 		}
 	}
 	// update security rules: add needed
@@ -909,32 +916,10 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 		}
 	}
 
-	//updatedRules = consolidateSharedRules(updatedRules)
-
 	if dirtySg {
 		sg.SecurityRules = &updatedRules
 	}
 	return sg, dirtySg, nil
-}
-
-func consolidateSharedRules(rules []network.SecurityRule) []network.SecurityRule {
-	finalRules := make([]network.SecurityRule, len(rules))
-	index := 0
-	for _, rule := range rules {
-		if allowsConsolidation(rule) {
-			existingRuleIndex, found := findConsolidationCandidate(finalRules[:index], rule)
-			if found {
-				finalRules[existingRuleIndex] = consolidate(finalRules[existingRuleIndex], rule)
-			} else {
-				finalRules[index] = makeConsolidatable(rule)
-				index++
-			}
-		} else {
-			finalRules[index] = rule
-			index++
-		}
-	}
-	return finalRules[:index]
 }
 
 func allowsConsolidation(rule network.SecurityRule) bool {
@@ -958,10 +943,10 @@ func makeConsolidatable(rule network.SecurityRule) network.SecurityRule {
 		Name: rule.Name,
 		SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
 			Protocol:                   rule.Protocol,
-			SourcePortRanges:           single(rule.SourcePortRange),
-			DestinationPortRanges:      single(rule.DestinationPortRange),
-			SourceAddressPrefixes:      single(rule.SourceAddressPrefix),
-			DestinationAddressPrefixes: single(rule.DestinationAddressPrefix),
+			SourcePortRanges:           collectionOrSingle(rule.SourcePortRanges, rule.SourcePortRange),
+			DestinationPortRanges:      collectionOrSingle(rule.DestinationPortRanges, rule.DestinationPortRange),
+			SourceAddressPrefixes:      collectionOrSingle(rule.SourceAddressPrefixes, rule.SourceAddressPrefix),
+			DestinationAddressPrefixes: collectionOrSingle(rule.DestinationAddressPrefixes, rule.DestinationAddressPrefix),
 			Access:    rule.Access,
 			Direction: rule.Direction,
 		},
@@ -969,6 +954,7 @@ func makeConsolidatable(rule network.SecurityRule) network.SecurityRule {
 }
 
 func consolidate(existingRule network.SecurityRule, newRule network.SecurityRule) network.SecurityRule {
+	// TODO: eliminate duplicates
 	return network.SecurityRule{
 		Name: existingRule.Name,
 		SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
@@ -983,7 +969,10 @@ func consolidate(existingRule network.SecurityRule, newRule network.SecurityRule
 	}
 }
 
-func single(s *string) *[]string {
+func collectionOrSingle(collection *[]string, s *string) *[]string {
+	if collection != nil {
+		return collection
+	}
 	if s == nil {
 		return &[]string{}
 	}
@@ -996,7 +985,7 @@ func appendElement(collection *[]string, s *string) *[]string {
 		return collection
 	}
 	if collection == nil {
-		return single(s)
+		return &[]string{*s}
 	}
 	newCollection := append(*collection, *s)
 	return &newCollection

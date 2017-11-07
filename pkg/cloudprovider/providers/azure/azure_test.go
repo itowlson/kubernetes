@@ -1152,19 +1152,17 @@ func TestIfServiceSpecifiesSharedRuleAndRuleExistsThenTheServicesPortAndAddressA
 	expectedRuleName := "shared-TCP-80-Internet"
 
 	sg := getTestSecurityGroup()
-	sg.SecurityGroupPropertiesFormat = &network.SecurityGroupPropertiesFormat{
-		SecurityRules: &[]network.SecurityRule{
-			network.SecurityRule{
-				Name: &expectedRuleName,
-				SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
-					Protocol:                   network.SecurityRuleProtocolTCP,
-					SourcePortRanges:           &[]string{"*"},
-					SourceAddressPrefixes:      &[]string{"Internet"},
-					DestinationPortRanges:      &[]string{"80"},
-					DestinationAddressPrefixes: &[]string{"192.168.33.44"},
-					Access:    network.SecurityRuleAccessAllow,
-					Direction: network.SecurityRuleDirectionInbound,
-				},
+	sg.SecurityRules = &[]network.SecurityRule{
+		network.SecurityRule{
+			Name: &expectedRuleName,
+			SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
+				Protocol:                 network.SecurityRuleProtocolTCP,
+				SourcePortRange:          to.StringPtr("*"),
+				SourceAddressPrefix:      to.StringPtr("Internet"),
+				DestinationPortRange:     to.StringPtr("80"),
+				DestinationAddressPrefix: to.StringPtr("192.168.33.44"),
+				Access:    network.SecurityRuleAccessAllow,
+				Direction: network.SecurityRuleDirectionInbound,
 			},
 		},
 	}
