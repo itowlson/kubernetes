@@ -1179,6 +1179,11 @@ func TestIfServiceSpecifiesSharedRuleAndRuleExistsThenTheServicesPortAndAddressA
 		t.Fatalf("Expected security rule %q but it was not present", expectedRuleName)
 	}
 
+	expectedDestinationIPCount := 2
+	if len(*securityRule.DestinationAddressPrefixes) != expectedDestinationIPCount {
+		t.Errorf("Shared rule should have had %d destination IP addresses but had %d", expectedDestinationIPCount, len(*securityRule.DestinationAddressPrefixes))
+	}
+
 	err = securityRuleMatches("Internet", v1.ServicePort{Port: 80}, "192.168.33.44", *securityRule)
 	if err != nil {
 		t.Errorf("Shared rule no longer matched other service IP: %v", err)
