@@ -487,7 +487,7 @@ func getTestSecurityGroup(services ...v1.Service) network.SecurityGroup {
 		for _, port := range service.Spec.Ports {
 			sources := getServiceSourceRanges(&service)
 			for _, src := range sources {
-				ruleName, _ := getSecurityRuleName(&service, port, src)
+				ruleName := getSecurityRuleName(&service, port, src)
 				rules = append(rules, network.SecurityRule{
 					Name: to.StringPtr(ruleName),
 					SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
@@ -693,7 +693,7 @@ func validateSecurityGroup(t *testing.T, securityGroup network.SecurityGroup, se
 		for _, wantedRule := range svc.Spec.Ports {
 			sources := getServiceSourceRanges(&svc)
 			for _, source := range sources {
-				wantedRuleName, _ := getSecurityRuleName(&svc, wantedRule, source)
+				wantedRuleName := getSecurityRuleName(&svc, wantedRule, source)
 				seenRules[wantedRuleName] = wantedRuleName
 				foundRule := false
 				for _, actualRule := range *securityGroup.SecurityRules {
@@ -1117,11 +1117,10 @@ func findSecurityRuleByName(sg network.SecurityGroup, ruleName string) *network.
 }
 
 func TestIfServiceSpecifiesSharedRuleAndRuleDoesNotExistItIsCreated(t *testing.T) {
-	ruleName := "sharedsr"
 	az := getTestCloud()
 	svc := getTestService("servicesr", v1.ProtocolTCP, 80)
 	svc.Spec.LoadBalancerIP = "192.168.77.88"
-	svc.Annotations[ServiceAnnotationSharedSecurityRule] = ruleName
+	svc.Annotations[ServiceAnnotationSharedSecurityRule] = "true"
 
 	sg := getTestSecurityGroup()
 
@@ -1132,29 +1131,40 @@ func TestIfServiceSpecifiesSharedRuleAndRuleDoesNotExistItIsCreated(t *testing.T
 
 	validateSecurityGroup(t, sg, svc)
 
-	securityRule := findSecurityRuleByName(sg, ruleName)
+	expectedRuleName := "shared-TCP-80-Internet"
+	securityRule := findSecurityRuleByName(sg, expectedRuleName)
 	if securityRule == nil {
-		t.Fatalf("Expected security rule %q but it was not present", ruleName)
+		t.Fatalf("Expected security rule %q but it was not present", expectedRuleName)
 	}
 
-	// TODO: is it useful to make further assertions about securityRule?
+	err = securityRuleMatches("Internet", v1.ServicePort{Port: 80}, "192.168.77.88", *securityRule)
+	if err != nil {
+		t.Errorf("Shared rule was not updated with new service IP: %v", err)
+	}
 }
 
 func TestIfServiceSpecifiesSharedRuleAndRuleExistsThenTheServicesPortAndAddressAreAdded(t *testing.T) {
-	ruleName := "sharedsr"
 	az := getTestCloud()
 	svc := getTestService("servicesr", v1.ProtocolTCP, 80)
 	svc.Spec.LoadBalancerIP = "192.168.77.88"
-	svc.Annotations[ServiceAnnotationSharedSecurityRule] = ruleName
+	svc.Annotations[ServiceAnnotationSharedSecurityRule] = "true"
+
+	expectedRuleName := "shared-TCP-80-Internet"
 
 	sg := getTestSecurityGroup()
-	sg.SecurityRules = &[]network.SecurityRule{
-		network.SecurityRule{
-			Name: &ruleName,
-			SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
-				SourceAddressPrefixes:      &[]string{"Internet"},
-				DestinationPortRanges:      &[]string{"8080"},
-				DestinationAddressPrefixes: &[]string{"192.168.33.44"},
+	sg.SecurityGroupPropertiesFormat = &network.SecurityGroupPropertiesFormat{
+		SecurityRules: &[]network.SecurityRule{
+			network.SecurityRule{
+				Name: &expectedRuleName,
+				SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
+					Protocol:                   network.SecurityRuleProtocolTCP,
+					SourcePortRanges:           &[]string{"*"},
+					SourceAddressPrefixes:      &[]string{"Internet"},
+					DestinationPortRanges:      &[]string{"80"},
+					DestinationAddressPrefixes: &[]string{"192.168.33.44"},
+					Access:    network.SecurityRuleAccessAllow,
+					Direction: network.SecurityRuleDirectionInbound,
+				},
 			},
 		},
 	}
@@ -1166,14 +1176,19 @@ func TestIfServiceSpecifiesSharedRuleAndRuleExistsThenTheServicesPortAndAddressA
 
 	validateSecurityGroup(t, sg, svc)
 
-	securityRule := findSecurityRuleByName(sg, ruleName)
+	securityRule := findSecurityRuleByName(sg, expectedRuleName)
 	if securityRule == nil {
-		t.Fatalf("Expected security rule %q but it was not present", ruleName)
+		t.Fatalf("Expected security rule %q but it was not present", expectedRuleName)
 	}
 
-	err = securityRuleMatches("Internet", v1.ServicePort{Port: 8080}, "192.168.33.44", *securityRule)
+	err = securityRuleMatches("Internet", v1.ServicePort{Port: 80}, "192.168.33.44", *securityRule)
 	if err != nil {
-		t.Errorf("Shared rule no longer matched existing definition: %v", err)
+		t.Errorf("Shared rule no longer matched other service IP: %v", err)
+	}
+
+	err = securityRuleMatches("Internet", v1.ServicePort{Port: 80}, "192.168.77.88", *securityRule)
+	if err != nil {
+		t.Errorf("Shared rule was not updated with new service IP: %v", err)
 	}
 }
 
@@ -1192,3 +1207,7 @@ func TestIfServiceSpecifiesSharedRuleAndRuleExistsThenTheServicesPortAndAddressA
 // func TestIfServiceIsEditedFromSharedRuleToOwnRuleThenItIsRemovedFromSharedRuleAndOwnRuleIsCreated(t *testing.T) {
 // 	t.Error()
 // }
+
+// TODO: We need a test for when two services share a source address prefix, IP address, port, etc.
+// and *one* of them is removed - how do we ref count at this level, or do we query the entire
+// service collection and re-formulate all rules?

@@ -836,17 +836,6 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 	}
 	expectedSecurityRules := make([]network.SecurityRule, len(ports)*len(sourceAddressPrefixes))
 
-	// if we are participating in a shared rule, reconcile that rule
-	// else do the previous logic
-	// ISSUE: what if we are in an edit situation where we are transitioning
-	// FROM a shared rule TO a standalone rule?  How do we locate the shared rule?
-	// By finding the IP address in its list?
-	// (or vice versa?)
-	// NOTE ALSO: need to test the case where the existing rule is any->any and
-	// it is edited to a shared rule
-	// THOUGHT: this might be easier if we allowed at most one shared rule so
-	// we didn't have to look at multiple rules?
-	isSharedRule := sharesSecurityRule(service)
 	for i, port := range ports {
 		_, securityProto, _, err := getProtocolsFromKubernetesProtocol(port.Protocol)
 		if err != nil {
@@ -877,76 +866,135 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 		updatedRules = *sg.SecurityRules
 	}
 
-	if isSharedRule {
-
-		if updatedRules == nil || len(updatedRules) == 0 {
-			// updatedRules = makeanewsharedrule()
-		} else {
-			// there are existing rules
-			if aRuleWithThisNameExists() {
-				// reconcile it
-				// TODO: how do we remove the old values?  We need to tag
-				// each value with which service owns it which seems impractical...
-				// it's kind of like we want to virtualise the 'private' rules
-				// over the shared rule, preserving the same ownership conventions
-				// via metadata or something
-				//
-				// We almost want to disassemble all existing shared rules into a bunch of
-				// 'if we had our druthers' pseudo-rules, then reconcile, then reassemble
-				//
-				// We can't use tags to track who is using e.g. a source address prefix
-				// because there aren't enough available (15 tags x 256 chars/tag)
-			} else {
-				// create the rule
+	// update security rules: remove unwanted
+	for i := len(updatedRules) - 1; i >= 0; i-- {
+		existingRule := updatedRules[i]
+		if serviceOwnsRule(service, *existingRule.Name) {
+			glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - considering evicting", serviceName, wantLb, *existingRule.Name)
+			keepRule := false
+			if findSecurityRule(expectedSecurityRules, existingRule) {
+				glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - keeping", serviceName, wantLb, *existingRule.Name)
+				keepRule = true
 			}
-		}
-
-	} else {
-
-		// update security rules: remove unwanted
-		for i := len(updatedRules) - 1; i >= 0; i-- {
-			existingRule := updatedRules[i]
-			if serviceOwnsRule(service, *existingRule.Name) {
-				glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - considering evicting", serviceName, wantLb, *existingRule.Name)
-				keepRule := false
-				if findSecurityRule(expectedSecurityRules, existingRule) {
-					glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - keeping", serviceName, wantLb, *existingRule.Name)
-					keepRule = true
-				}
-				if !keepRule {
-					glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - dropping", serviceName, wantLb, *existingRule.Name)
-					updatedRules = append(updatedRules[:i], updatedRules[i+1:]...)
-					dirtySg = true
-				}
-			}
-		}
-		// update security rules: add needed
-		for _, expectedRule := range expectedSecurityRules {
-			foundRule := false
-			if findSecurityRule(updatedRules, expectedRule) {
-				glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - already exists", serviceName, wantLb, *expectedRule.Name)
-				foundRule = true
-			}
-			if !foundRule {
-				glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - adding", serviceName, wantLb, *expectedRule.Name)
-
-				nextAvailablePriority, err := getNextAvailablePriority(updatedRules)
-				if err != nil {
-					return sg, false, err
-				}
-
-				expectedRule.Priority = to.Int32Ptr(nextAvailablePriority)
-				updatedRules = append(updatedRules, expectedRule)
+			if !keepRule {
+				glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - dropping", serviceName, wantLb, *existingRule.Name)
+				updatedRules = append(updatedRules[:i], updatedRules[i+1:]...)
 				dirtySg = true
 			}
 		}
-
 	}
+	// update security rules: add needed
+	for _, expectedRule := range expectedSecurityRules {
+		foundRule := false
+		if findSecurityRule(updatedRules, expectedRule) {
+			glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - already exists", serviceName, wantLb, *expectedRule.Name)
+			foundRule = true
+		}
+		if !foundRule {
+			glog.V(10).Infof("reconcile(%s)(%t): sg rule(%s) - adding", serviceName, wantLb, *expectedRule.Name)
+
+			nextAvailablePriority, err := getNextAvailablePriority(updatedRules)
+			if err != nil {
+				return sg, false, err
+			}
+
+			expectedRule.Priority = to.Int32Ptr(nextAvailablePriority)
+			updatedRules = append(updatedRules, expectedRule)
+			dirtySg = true
+		}
+	}
+
+	updatedRules = consolidateSharedRules(updatedRules)
 
 	if dirtySg {
 		sg.SecurityRules = &updatedRules
 	}
 	return sg, dirtySg, nil
+}
+
+func consolidateSharedRules(rules []network.SecurityRule) []network.SecurityRule {
+	finalRules := make([]network.SecurityRule, len(rules))
+	index := 0
+	for _, rule := range rules {
+		if allowsConsolidation(rule) {
+			existingRuleIndex, found := findConsolidationCandidate(finalRules[:index], rule)
+			if found {
+				finalRules[existingRuleIndex] = consolidate(finalRules[existingRuleIndex], rule)
+			} else {
+				finalRules[index] = makeConsolidatable(rule)
+				index++
+			}
+		} else {
+			finalRules[index] = rule
+			index++
+		}
+	}
+	return finalRules[:index]
+}
+
+func allowsConsolidation(rule network.SecurityRule) bool {
+	return strings.HasPrefix(*rule.Name, "shared")
+}
+
+func findConsolidationCandidate(rules []network.SecurityRule, rule network.SecurityRule) (int, bool) {
+	for index, r := range rules {
+		if allowsConsolidation(r) {
+			if strings.EqualFold(*r.Name, *rule.Name) {
+				return index, true
+			}
+		}
+	}
+
+	return 0, false
+}
+
+func makeConsolidatable(rule network.SecurityRule) network.SecurityRule {
+	return network.SecurityRule{
+		Name: rule.Name,
+		SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
+			Protocol:                   rule.Protocol,
+			SourcePortRanges:           single(rule.SourcePortRange),
+			DestinationPortRanges:      single(rule.DestinationPortRange),
+			SourceAddressPrefixes:      single(rule.SourceAddressPrefix),
+			DestinationAddressPrefixes: single(rule.DestinationAddressPrefix),
+			Access:    rule.Access,
+			Direction: rule.Direction,
+		},
+	}
+}
+
+func consolidate(existingRule network.SecurityRule, newRule network.SecurityRule) network.SecurityRule {
+	return network.SecurityRule{
+		Name: existingRule.Name,
+		SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
+			Protocol:                   existingRule.Protocol,
+			SourcePortRanges:           existingRule.SourcePortRanges,
+			DestinationPortRanges:      existingRule.DestinationPortRanges,
+			SourceAddressPrefixes:      existingRule.SourceAddressPrefixes,
+			DestinationAddressPrefixes: appendElement(existingRule.SecurityRulePropertiesFormat.DestinationAddressPrefixes, newRule.DestinationAddressPrefix),
+			Access:    existingRule.Access,
+			Direction: existingRule.Direction,
+		},
+	}
+}
+
+func single(s *string) *[]string {
+	if s == nil {
+		return &[]string{}
+	}
+	return &[]string{*s}
+}
+
+func appendElement(collection *[]string, s *string) *[]string {
+	// These guard conditions should never happen but belt and braces
+	if s == nil {
+		return collection
+	}
+	if collection == nil {
+		return single(s)
+	}
+	newCollection := append(*collection, *s)
+	return &newCollection
 }
 
 func findProbe(probes []network.Probe, probe network.Probe) bool {
@@ -1092,10 +1140,10 @@ func subnet(service *v1.Service) *string {
 	return nil
 }
 
-func sharedSecurityRuleName(service *v1.Service) *string {
+func useSharedSecurityRule(service *v1.Service) bool {
 	if l, ok := service.Annotations[ServiceAnnotationSharedSecurityRule]; ok {
-		return &l
+		return l == "true"
 	}
 
-	return nil
+	return false
 }
