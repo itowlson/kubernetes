@@ -119,7 +119,7 @@ func (az *Cloud) determinePublicIPName(clusterName string, service *v1.Service) 
 }
 
 // EnsureLoadBalancer creates a new load balancer 'name', or updates the existing one. Returns the status of the balancer
-func (az *Cloud) EnsureLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error) {
+func (az *Cloud) EnsureLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node, systemAnnotations map[string]string) (*v1.LoadBalancerStatus, error) {
 	isInternal := requiresInternalLoadBalancer(service)
 	lbName := getLoadBalancerName(clusterName, isInternal)
 
@@ -297,8 +297,8 @@ func (az *Cloud) EnsureLoadBalancer(clusterName string, service *v1.Service, nod
 }
 
 // UpdateLoadBalancer updates hosts under the specified load balancer.
-func (az *Cloud) UpdateLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node) error {
-	_, err := az.EnsureLoadBalancer(clusterName, service, nodes)
+func (az *Cloud) UpdateLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node, systemAnnotations map[string]string) error {
+	_, err := az.EnsureLoadBalancer(clusterName, service, nodes, systemAnnotations)
 	return err
 }
 
@@ -308,7 +308,7 @@ func (az *Cloud) UpdateLoadBalancer(clusterName string, service *v1.Service, nod
 // This construction is useful because many cloud providers' load balancers
 // have multiple underlying components, meaning a Get could say that the LB
 // doesn't exist even if some part of it is still laying around.
-func (az *Cloud) EnsureLoadBalancerDeleted(clusterName string, service *v1.Service) error {
+func (az *Cloud) EnsureLoadBalancerDeleted(clusterName string, service *v1.Service, systemAnnotations map[string]string) error {
 	isInternal := requiresInternalLoadBalancer(service)
 	lbName := getLoadBalancerName(clusterName, isInternal)
 	serviceName := getServiceName(service)
@@ -791,6 +791,12 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 		ports = service.Spec.Ports
 	} else {
 		ports = []v1.ServicePort{}
+	}
+
+	if !wantLb {
+		glog.V(1).Infof("***** Removing service %s from LB", service.Name)
+		glog.V(1).Infof("***** service.Spec.LoadBalancerIP: %s", service.Spec.LoadBalancerIP)
+		glog.V(1).Infof("***** len(service.Status.LoadBalancer.Ingress): %d", len(service.Status.LoadBalancer.Ingress))
 	}
 
 	sourceRanges, err := serviceapi.GetLoadBalancerSourceRanges(service)

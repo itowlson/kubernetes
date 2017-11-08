@@ -853,7 +853,7 @@ func TestDescribeLoadBalancerOnUpdate(t *testing.T) {
 	c, _ := newAWSCloud(strings.NewReader("[global]"), awsServices)
 	awsServices.elb.(*MockedFakeELB).expectDescribeLoadBalancers("aid")
 
-	c.UpdateLoadBalancer(TestClusterName, &v1.Service{ObjectMeta: metav1.ObjectMeta{Name: "myservice", UID: "id"}}, []*v1.Node{})
+	c.UpdateLoadBalancer(TestClusterName, &v1.Service{ObjectMeta: metav1.ObjectMeta{Name: "myservice", UID: "id"}}, []*v1.Node{}, nil)
 }
 
 func TestDescribeLoadBalancerOnGet(t *testing.T) {
@@ -869,7 +869,7 @@ func TestDescribeLoadBalancerOnEnsure(t *testing.T) {
 	c, _ := newAWSCloud(strings.NewReader("[global]"), awsServices)
 	awsServices.elb.(*MockedFakeELB).expectDescribeLoadBalancers("aid")
 
-	c.EnsureLoadBalancer(TestClusterName, &v1.Service{ObjectMeta: metav1.ObjectMeta{Name: "myservice", UID: "id"}}, []*v1.Node{})
+	c.EnsureLoadBalancer(TestClusterName, &v1.Service{ObjectMeta: metav1.ObjectMeta{Name: "myservice", UID: "id"}}, []*v1.Node{}, nil)
 }
 
 func TestBuildListener(t *testing.T) {

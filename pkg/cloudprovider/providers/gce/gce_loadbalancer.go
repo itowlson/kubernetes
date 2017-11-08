@@ -106,7 +106,7 @@ func (gce *GCECloud) GetLoadBalancer(clusterName string, svc *v1.Service) (*v1.L
 }
 
 // EnsureLoadBalancer is an implementation of LoadBalancer.EnsureLoadBalancer.
-func (gce *GCECloud) EnsureLoadBalancer(clusterName string, svc *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error) {
+func (gce *GCECloud) EnsureLoadBalancer(clusterName string, svc *v1.Service, nodes []*v1.Node, systemAnnotations map[string]string) (*v1.LoadBalancerStatus, error) {
 	loadBalancerName := cloudprovider.GetLoadBalancerName(svc)
 	desiredScheme := getSvcScheme(svc)
 	clusterID, err := gce.ClusterID.GetID()
@@ -155,7 +155,7 @@ func (gce *GCECloud) EnsureLoadBalancer(clusterName string, svc *v1.Service, nod
 }
 
 // UpdateLoadBalancer is an implementation of LoadBalancer.UpdateLoadBalancer.
-func (gce *GCECloud) UpdateLoadBalancer(clusterName string, svc *v1.Service, nodes []*v1.Node) error {
+func (gce *GCECloud) UpdateLoadBalancer(clusterName string, svc *v1.Service, nodes []*v1.Node, systemAnnotations map[string]string) error {
 	loadBalancerName := cloudprovider.GetLoadBalancerName(svc)
 	scheme := getSvcScheme(svc)
 	clusterID, err := gce.ClusterID.GetID()
@@ -176,7 +176,7 @@ func (gce *GCECloud) UpdateLoadBalancer(clusterName string, svc *v1.Service, nod
 }
 
 // EnsureLoadBalancerDeleted is an implementation of LoadBalancer.EnsureLoadBalancerDeleted.
-func (gce *GCECloud) EnsureLoadBalancerDeleted(clusterName string, svc *v1.Service) error {
+func (gce *GCECloud) EnsureLoadBalancerDeleted(clusterName string, svc *v1.Service, systemAnnotations map[string]string) error {
 	loadBalancerName := cloudprovider.GetLoadBalancerName(svc)
 	scheme := getSvcScheme(svc)
 	clusterID, err := gce.ClusterID.GetID()

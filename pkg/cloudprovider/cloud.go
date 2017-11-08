@@ -95,12 +95,12 @@ type LoadBalancer interface {
 	// Implementations must treat the *v1.Service and *v1.Node
 	// parameters as read-only and not modify them.
 	// Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
-	EnsureLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error)
+	EnsureLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node, systemAnnotations map[string]string) (*v1.LoadBalancerStatus, error)
 	// UpdateLoadBalancer updates hosts under the specified load balancer.
 	// Implementations must treat the *v1.Service and *v1.Node
 	// parameters as read-only and not modify them.
 	// Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
-	UpdateLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node) error
+	UpdateLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node, systemAnnotations map[string]string) error
 	// EnsureLoadBalancerDeleted deletes the specified load balancer if it
 	// exists, returning nil if the load balancer specified either didn't exist or
 	// was successfully deleted.
@@ -109,7 +109,7 @@ type LoadBalancer interface {
 	// doesn't exist even if some part of it is still laying around.
 	// Implementations must treat the *v1.Service parameter as read-only and not modify it.
 	// Parameter 'clusterName' is the name of the cluster as presented to kube-controller-manager
-	EnsureLoadBalancerDeleted(clusterName string, service *v1.Service) error
+	EnsureLoadBalancerDeleted(clusterName string, service *v1.Service, systemAnnotations map[string]string) error
 }
 
 // Instances is an abstract, pluggable interface for sets of instances.

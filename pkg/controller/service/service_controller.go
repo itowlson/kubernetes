@@ -27,6 +27,7 @@ import (
 	"github.com/golang/glog"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -242,8 +243,9 @@ func (s *ServiceController) processServiceUpdate(cachedService *cachedService, s
 		}
 	}
 	// cache the service, we need the info for service deletion
+	glog.V(1).Infof("Caching service state for %s with spec %+v", service.Name, service.Spec)
 	cachedService.state = service
-	err, retry := s.createLoadBalancerIfNeeded(key, service)
+	err, retry, newService := s.createLoadBalancerIfNeeded(key, service)
 	if err != nil {
 		message := "Error creating load balancer"
 		var retryToReturn time.Duration
@@ -262,6 +264,9 @@ func (s *ServiceController) processServiceUpdate(cachedService *cachedService, s
 	// NOTE: Since we update the cached service if and only if we successfully
 	// processed it, a cached service being nil implies that it hasn't yet
 	// been successfully processed.
+	glog.V(1).Infof("After creating LB for %s its spec was %+v and status was %+v (ing count %d)", newService.Name, newService.Spec, newService.Status, len(newService.Status.LoadBalancer.Ingress))
+	glog.V(1).Infof("After creating LB caching %s under key %s", newService.Name, key)
+	cachedService.state = newService
 	s.cache.set(key, cachedService)
 
 	cachedService.resetRetryDelay()
@@ -270,7 +275,7 @@ func (s *ServiceController) processServiceUpdate(cachedService *cachedService, s
 
 // Returns whatever error occurred along with a boolean indicator of whether it
 // should be retried.
-func (s *ServiceController) createLoadBalancerIfNeeded(key string, service *v1.Service) (error, bool) {
+func (s *ServiceController) createLoadBalancerIfNeeded(key string, service *v1.Service) (error, bool, *v1.Service) {
 	// Note: It is safe to just call EnsureLoadBalancer.  But, on some clouds that requires a delete & create,
 	// which may involve service interruption.  Also, we would like user-friendly events.
 
@@ -282,13 +287,18 @@ func (s *ServiceController) createLoadBalancerIfNeeded(key string, service *v1.S
 	if !wantsLoadBalancer(service) {
 		_, exists, err := s.balancer.GetLoadBalancer(s.clusterName, service)
 		if err != nil {
-			return fmt.Errorf("Error getting LB for service %s: %v", key, err), retryable
+			return fmt.Errorf("Error getting LB for service %s: %v", key, err), retryable, nil
 		}
 		if exists {
 			glog.Infof("Deleting existing load balancer for service %s that no longer needs a load balancer.", key)
+			glog.V(1).Infof("*** Previous LB state of %s was %+v (ing count %d)", service.Name, previousState, len(previousState.Ingress))
 			s.eventRecorder.Event(service, v1.EventTypeNormal, "DeletingLoadBalancer", "Deleting load balancer")
-			if err := s.balancer.EnsureLoadBalancerDeleted(s.clusterName, service); err != nil {
-				return err, retryable
+			systemAnnotations, err := s.systemAnnotations()
+			if err != nil {
+				return err, retryable, nil
+			}
+			if err = s.balancer.EnsureLoadBalancerDeleted(s.clusterName, service, systemAnnotations); err != nil {
+				return err, retryable, nil
 			}
 			s.eventRecorder.Event(service, v1.EventTypeNormal, "DeletedLoadBalancer", "Deleted load balancer")
 		}
@@ -302,7 +312,7 @@ func (s *ServiceController) createLoadBalancerIfNeeded(key string, service *v1.S
 		s.eventRecorder.Event(service, v1.EventTypeNormal, "EnsuringLoadBalancer", "Ensuring load balancer")
 		newState, err = s.ensureLoadBalancer(service)
 		if err != nil {
-			return fmt.Errorf("Failed to ensure load balancer for service %s: %v", key, err), retryable
+			return fmt.Errorf("Failed to ensure load balancer for service %s: %v", key, err), retryable, nil
 		}
 		s.eventRecorder.Event(service, v1.EventTypeNormal, "EnsuredLoadBalancer", "Ensured load balancer")
 	}
@@ -317,13 +327,13 @@ func (s *ServiceController) createLoadBalancerIfNeeded(key string, service *v1.S
 		service.Status.LoadBalancer = *newState
 
 		if err := s.persistUpdate(service); err != nil {
-			return fmt.Errorf("Failed to persist updated status to apiserver, even after retries. Giving up: %v", err), notRetryable
+			return fmt.Errorf("Failed to persist updated status to apiserver, even after retries. Giving up: %v", err), notRetryable, nil
 		}
 	} else {
 		glog.V(2).Infof("Not persisting unchanged LoadBalancerStatus for service %s to registry.", key)
 	}
 
-	return nil, notRetryable
+	return nil, notRetryable, service
 }
 
 func (s *ServiceController) persistUpdate(service *v1.Service) error {
@@ -365,10 +375,15 @@ func (s *ServiceController) ensureLoadBalancer(service *v1.Service) (*v1.LoadBal
 		s.eventRecorder.Eventf(service, v1.EventTypeWarning, "UnAvailableLoadBalancer", "There are no available nodes for LoadBalancer service %s/%s", service.Namespace, service.Name)
 	}
 
+	systemAnnotations, err := s.systemAnnotations()
+	if err != nil {
+		return nil, err
+	}
+
 	// - Only one protocol supported per service
 	// - Not all cloud providers support all protocols and the next step is expected to return
 	//   an error for unsupported protocols
-	return s.balancer.EnsureLoadBalancer(s.clusterName, service, nodes)
+	return s.balancer.EnsureLoadBalancer(s.clusterName, service, nodes, systemAnnotations)
 }
 
 // ListKeys implements the interface required by DeltaFIFO to list the keys we
@@ -691,8 +706,13 @@ func (s *ServiceController) lockedUpdateLoadBalancerHosts(service *v1.Service, h
 		return nil
 	}
 
+	systemAnnotations, err := s.systemAnnotations()
+	if err != nil {
+		return err
+	}
+
 	// This operation doesn't normally take very long (and happens pretty often), so we only record the final event
-	err := s.balancer.UpdateLoadBalancer(s.clusterName, service, hosts)
+	err = s.balancer.UpdateLoadBalancer(s.clusterName, service, hosts, systemAnnotations)
 	if err == nil {
 		// If there are no available nodes for LoadBalancer service, make a EventTypeWarning event for it.
 		if len(hosts) == 0 {
@@ -805,7 +825,13 @@ func (s *ServiceController) processLoadBalancerDelete(cachedService *cachedServi
 		return nil, doNotRetry
 	}
 	s.eventRecorder.Event(service, v1.EventTypeNormal, "DeletingLoadBalancer", "Deleting load balancer")
-	err := s.balancer.EnsureLoadBalancerDeleted(s.clusterName, service)
+
+	systemAnnotations, err := s.systemAnnotations()
+	if err != nil {
+		return err, cachedService.nextRetryDelay()
+	}
+
+	err = s.balancer.EnsureLoadBalancerDeleted(s.clusterName, service, systemAnnotations)
 	if err != nil {
 		message := "Error deleting load balancer (will retry): " + err.Error()
 		s.eventRecorder.Event(service, v1.EventTypeWarning, "DeletingLoadBalancerFailed", message)
@@ -816,4 +842,12 @@ func (s *ServiceController) processLoadBalancerDelete(cachedService *cachedServi
 
 	cachedService.resetRetryDelay()
 	return nil, doNotRetry
+}
+
+func (s *ServiceController) systemAnnotations() (map[string]string, error) {
+	systemNamespace, err := s.kubeClient.CoreV1().Namespaces().Get("kube-system", meta_v1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return systemNamespace.Annotations, nil
 }

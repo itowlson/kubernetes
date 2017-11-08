@@ -565,7 +565,7 @@ func getNodeSecurityGroupIDForLB(compute *gophercloud.ServiceClient, nodes []*v1
 // a list of regions (from config) and query/create loadbalancers in
 // each region.
 
-func (lbaas *LbaasV2) EnsureLoadBalancer(clusterName string, apiService *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error) {
+func (lbaas *LbaasV2) EnsureLoadBalancer(clusterName string, apiService *v1.Service, nodes []*v1.Node, systemAnnotations map[string]string) (*v1.LoadBalancerStatus, error) {
 	glog.V(4).Infof("EnsureLoadBalancer(%v, %v, %v, %v, %v, %v, %v)", clusterName, apiService.Namespace, apiService.Name, apiService.Spec.LoadBalancerIP, apiService.Spec.Ports, nodes, apiService.Annotations)
 
 	if len(nodes) == 0 {
@@ -865,7 +865,7 @@ func (lbaas *LbaasV2) EnsureLoadBalancer(clusterName string, apiService *v1.Serv
 		err := lbaas.ensureSecurityGroup(clusterName, apiService, nodes, loadbalancer)
 		if err != nil {
 			// cleanup what was created so far
-			_ = lbaas.EnsureLoadBalancerDeleted(clusterName, apiService)
+			_ = lbaas.EnsureLoadBalancerDeleted(clusterName, apiService, systemAnnotations)
 			return status, err
 		}
 	}
@@ -1047,7 +1047,7 @@ func (lbaas *LbaasV2) ensureSecurityGroup(clusterName string, apiService *v1.Ser
 	return nil
 }
 
-func (lbaas *LbaasV2) UpdateLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node) error {
+func (lbaas *LbaasV2) UpdateLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node, systemAnnotations map[string]string) error {
 	loadBalancerName := cloudprovider.GetLoadBalancerName(service)
 	glog.V(4).Infof("UpdateLoadBalancer(%v, %v, %v)", clusterName, loadBalancerName, nodes)
 
@@ -1261,7 +1261,7 @@ func (lbaas *LbaasV2) updateSecurityGroup(clusterName string, apiService *v1.Ser
 	return nil
 }
 
-func (lbaas *LbaasV2) EnsureLoadBalancerDeleted(clusterName string, service *v1.Service) error {
+func (lbaas *LbaasV2) EnsureLoadBalancerDeleted(clusterName string, service *v1.Service, systemAnnotations map[string]string) error {
 	loadBalancerName := cloudprovider.GetLoadBalancerName(service)
 	glog.V(4).Infof("EnsureLoadBalancerDeleted(%v, %v)", clusterName, loadBalancerName)
 

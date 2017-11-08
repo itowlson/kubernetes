@@ -151,7 +151,7 @@ func (f *FakeCloud) GetLoadBalancer(clusterName string, service *v1.Service) (*v
 
 // EnsureLoadBalancer is a test-spy implementation of LoadBalancer.EnsureLoadBalancer.
 // It adds an entry "create" into the internal method call record.
-func (f *FakeCloud) EnsureLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error) {
+func (f *FakeCloud) EnsureLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node, systemAnnotations map[string]string) (*v1.LoadBalancerStatus, error) {
 	f.addCall("create")
 	if f.Balancers == nil {
 		f.Balancers = make(map[string]FakeBalancer)
@@ -176,7 +176,7 @@ func (f *FakeCloud) EnsureLoadBalancer(clusterName string, service *v1.Service, 
 
 // UpdateLoadBalancer is a test-spy implementation of LoadBalancer.UpdateLoadBalancer.
 // It adds an entry "update" into the internal method call record.
-func (f *FakeCloud) UpdateLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node) error {
+func (f *FakeCloud) UpdateLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node, systemAnnotations map[string]string) error {
 	f.addCall("update")
 	f.UpdateCalls = append(f.UpdateCalls, FakeUpdateBalancerCall{service, nodes})
 	return f.Err
@@ -184,7 +184,7 @@ func (f *FakeCloud) UpdateLoadBalancer(clusterName string, service *v1.Service, 
 
 // EnsureLoadBalancerDeleted is a test-spy implementation of LoadBalancer.EnsureLoadBalancerDeleted.
 // It adds an entry "delete" into the internal method call record.
-func (f *FakeCloud) EnsureLoadBalancerDeleted(clusterName string, service *v1.Service) error {
+func (f *FakeCloud) EnsureLoadBalancerDeleted(clusterName string, service *v1.Service, systemAnnotations map[string]string) error {
 	f.addCall("delete")
 	return f.Err
 }

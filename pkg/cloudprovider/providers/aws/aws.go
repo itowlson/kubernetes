@@ -2806,7 +2806,7 @@ func buildListener(port v1.ServicePort, annotations map[string]string, sslPorts 
 }
 
 // EnsureLoadBalancer implements LoadBalancer.EnsureLoadBalancer
-func (c *Cloud) EnsureLoadBalancer(clusterName string, apiService *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error) {
+func (c *Cloud) EnsureLoadBalancer(clusterName string, apiService *v1.Service, nodes []*v1.Node, systemAnnotations map[string]string) (*v1.LoadBalancerStatus, error) {
 	annotations := apiService.Annotations
 	glog.V(2).Infof("EnsureLoadBalancer(%v, %v, %v, %v, %v, %v, %v)",
 		clusterName, apiService.Namespace, apiService.Name, c.region, apiService.Spec.LoadBalancerIP, apiService.Spec.Ports, annotations)
@@ -3317,7 +3317,7 @@ func (c *Cloud) updateInstanceSecurityGroupsForLoadBalancer(lb *elb.LoadBalancer
 }
 
 // EnsureLoadBalancerDeleted implements LoadBalancer.EnsureLoadBalancerDeleted.
-func (c *Cloud) EnsureLoadBalancerDeleted(clusterName string, service *v1.Service) error {
+func (c *Cloud) EnsureLoadBalancerDeleted(clusterName string, service *v1.Service, systemAnnotations map[string]string) error {
 	loadBalancerName := cloudprovider.GetLoadBalancerName(service)
 	lb, err := c.describeLoadBalancer(loadBalancerName)
 	if err != nil {
@@ -3417,7 +3417,7 @@ func (c *Cloud) EnsureLoadBalancerDeleted(clusterName string, service *v1.Servic
 }
 
 // UpdateLoadBalancer implements LoadBalancer.UpdateLoadBalancer
-func (c *Cloud) UpdateLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node) error {
+func (c *Cloud) UpdateLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node, systemAnnotations map[string]string) error {
 	instances, err := c.findInstancesForELB(nodes)
 	if err != nil {
 		return err
