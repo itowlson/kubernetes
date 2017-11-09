@@ -902,7 +902,7 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 		for _, port := range ports {
 			for _, sourceAddressPrefix := range sourceAddressPrefixes {
 				sharedRuleName := getSecurityRuleName(service, port, sourceAddressPrefix)
-				sharedIndex, sharedRule, sharedRuleFound := findSecurityRuleByNameEx2LatestForDave(updatedRules, sharedRuleName)
+				sharedIndex, sharedRule, sharedRuleFound := findSecurityRuleByName(updatedRules, sharedRuleName)
 				if !sharedRuleFound {
 					glog.V(4).Infof("Expected to find shared rule %s for service %s being deleted, but did not", sharedRuleName, service.Name)
 					return sg, false, fmt.Errorf("Expected to find shared rule %s for service %s being deleted, but did not", sharedRuleName, service.Name)
@@ -929,10 +929,15 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 		}
 	}
 
-	// update security rules: prepare any existing rules for consolidation
+	// update security rules: prepare rules for consolidation
 	for index, rule := range updatedRules {
 		if allowsConsolidation(rule) {
 			updatedRules[index] = makeConsolidatable(rule)
+		}
+	}
+	for index, rule := range expectedSecurityRules {
+		if allowsConsolidation(rule) {
+			expectedSecurityRules[index] = makeConsolidatable(rule)
 		}
 	}
 	// update security rules: add needed
@@ -967,7 +972,7 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 	return sg, dirtySg, nil
 }
 
-func findSecurityRuleByNameEx2LatestForDave(rules []network.SecurityRule, ruleName string) (int, network.SecurityRule, bool) {
+func findSecurityRuleByName(rules []network.SecurityRule, ruleName string) (int, network.SecurityRule, bool) {
 	for index, rule := range rules {
 		if rule.Name != nil && strings.EqualFold(*rule.Name, ruleName) {
 			return index, rule, true
@@ -1005,6 +1010,7 @@ func makeConsolidatable(rule network.SecurityRule) network.SecurityRule {
 	return network.SecurityRule{
 		Name: rule.Name,
 		SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
+			Priority:                   rule.Priority,
 			Protocol:                   rule.Protocol,
 			SourcePortRanges:           collectionOrSingle(rule.SourcePortRanges, rule.SourcePortRange),
 			DestinationPortRanges:      collectionOrSingle(rule.DestinationPortRanges, rule.DestinationPortRange),
@@ -1025,7 +1031,7 @@ func consolidate(existingRule network.SecurityRule, newRule network.SecurityRule
 			SourcePortRanges:           existingRule.SourcePortRanges,
 			DestinationPortRanges:      existingRule.DestinationPortRanges,
 			SourceAddressPrefixes:      existingRule.SourceAddressPrefixes,
-			DestinationAddressPrefixes: appendElement(existingRule.SecurityRulePropertiesFormat.DestinationAddressPrefixes, newRule.DestinationAddressPrefix),
+			DestinationAddressPrefixes: appendElements(existingRule.SecurityRulePropertiesFormat.DestinationAddressPrefixes, newRule.DestinationAddressPrefix, newRule.DestinationAddressPrefixes),
 			Access:    existingRule.Access,
 			Direction: existingRule.Direction,
 		},
@@ -1042,15 +1048,19 @@ func collectionOrSingle(collection *[]string, s *string) *[]string {
 	return &[]string{*s}
 }
 
-func appendElement(collection *[]string, s *string) *[]string {
-	// These guard conditions should never happen but belt and braces
-	if s == nil {
-		return collection
+func appendElements(collection *[]string, appendString *string, appendStrings *[]string) *[]string {
+	newCollection := []string{}
+
+	if collection != nil {
+		newCollection = append(newCollection, *collection...)
 	}
-	if collection == nil {
-		return &[]string{*s}
+	if appendString != nil {
+		newCollection = append(newCollection, *appendString)
 	}
-	newCollection := append(*collection, *s)
+	if appendStrings != nil {
+		newCollection = append(newCollection, *appendStrings...)
+	}
+
 	return &newCollection
 }
 
