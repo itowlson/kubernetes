@@ -1197,41 +1197,37 @@ func TestIfServiceSpecifiesSharedRuleAndRuleExistsThenTheServicesPortAndAddressA
 
 func TestIfServiceSpecifiesSharedRuleAndServiceIsDeletedThenTheServicesPortAndAddressAreRemoved(t *testing.T) {
 	az := getTestCloud()
-	svc := getTestService("servicesr", v1.ProtocolTCP, 80)
-	svc.Spec.LoadBalancerIP = "192.168.77.88"
-	svc.Annotations[ServiceAnnotationSharedSecurityRule] = "true"
+
+	svc1 := getTestService("servicesr1", v1.ProtocolTCP, 80)
+	svc1.Spec.LoadBalancerIP = "192.168.77.88"
+	svc1.Annotations[ServiceAnnotationSharedSecurityRule] = "true"
+
+	svc2 := getTestService("servicesr2", v1.ProtocolTCP, 80)
+	svc2.Spec.LoadBalancerIP = "192.168.33.44"
+	svc2.Annotations[ServiceAnnotationSharedSecurityRule] = "true"
 
 	expectedRuleName := "shared-TCP-80-Internet"
 
 	sg := getTestSecurityGroup()
-	sg.SecurityRules = &[]network.SecurityRule{
-		network.SecurityRule{
-			Name: &expectedRuleName,
-			SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
-				Protocol:                 network.SecurityRuleProtocolTCP,
-				SourcePortRange:          to.StringPtr("*"),
-				SourceAddressPrefix:      to.StringPtr("Internet"),
-				DestinationPortRange:     to.StringPtr("80"),
-				DestinationAddressPrefix: to.StringPtr("192.168.33.44"),
-				Access:    network.SecurityRuleAccessAllow,
-				Direction: network.SecurityRuleDirectionInbound,
-			},
-		},
-	}
 
-	sg, _, err := az.reconcileSecurityGroup(sg, testClusterName, &svc, to.StringPtr(svc.Spec.LoadBalancerIP), true)
+	sg, _, err := az.reconcileSecurityGroup(sg, testClusterName, &svc1, to.StringPtr(svc1.Spec.LoadBalancerIP), true)
 	if err != nil {
-		t.Errorf("Unexpected error: %q", err)
+		t.Errorf("Unexpected error adding svc1: %q", err)
 	}
 
-	validateSecurityGroup(t, sg, svc)
-
-	sg, _, err = az.reconcileSecurityGroup(sg, testClusterName, &svc, to.StringPtr(svc.Spec.LoadBalancerIP), false)
+	sg, _, err = az.reconcileSecurityGroup(sg, testClusterName, &svc2, to.StringPtr(svc2.Spec.LoadBalancerIP), true)
 	if err != nil {
-		t.Errorf("Unexpected error: %q", err)
+		t.Errorf("Unexpected error adding svc2: %q", err)
 	}
 
-	validateSecurityGroup(t, sg, svc)
+	validateSecurityGroup(t, sg, svc1, svc2)
+
+	sg, _, err = az.reconcileSecurityGroup(sg, testClusterName, &svc1, to.StringPtr(svc1.Spec.LoadBalancerIP), false)
+	if err != nil {
+		t.Errorf("Unexpected error removing svc1: %q", err)
+	}
+
+	validateSecurityGroup(t, sg, svc2)
 
 	securityRule := findSecurityRuleByName(sg, expectedRuleName)
 	if securityRule == nil {

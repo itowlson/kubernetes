@@ -243,7 +243,7 @@ func (s *ServiceController) processServiceUpdate(cachedService *cachedService, s
 	}
 	// cache the service, we need the info for service deletion
 	cachedService.state = service
-	err, retry := s.createLoadBalancerIfNeeded(key, service)
+	err, retry, updatedService := s.createLoadBalancerIfNeeded(key, service)
 	if err != nil {
 		message := "Error creating load balancer"
 		var retryToReturn time.Duration
@@ -262,6 +262,7 @@ func (s *ServiceController) processServiceUpdate(cachedService *cachedService, s
 	// NOTE: Since we update the cached service if and only if we successfully
 	// processed it, a cached service being nil implies that it hasn't yet
 	// been successfully processed.
+	cachedService.state = updatedService
 	s.cache.set(key, cachedService)
 
 	cachedService.resetRetryDelay()
@@ -270,7 +271,7 @@ func (s *ServiceController) processServiceUpdate(cachedService *cachedService, s
 
 // Returns whatever error occurred along with a boolean indicator of whether it
 // should be retried.
-func (s *ServiceController) createLoadBalancerIfNeeded(key string, service *v1.Service) (error, bool) {
+func (s *ServiceController) createLoadBalancerIfNeeded(key string, service *v1.Service) (error, bool, *v1.Service) {
 	// Note: It is safe to just call EnsureLoadBalancer.  But, on some clouds that requires a delete & create,
 	// which may involve service interruption.  Also, we would like user-friendly events.
 
@@ -282,13 +283,16 @@ func (s *ServiceController) createLoadBalancerIfNeeded(key string, service *v1.S
 	if !wantsLoadBalancer(service) {
 		_, exists, err := s.balancer.GetLoadBalancer(s.clusterName, service)
 		if err != nil {
-			return fmt.Errorf("Error getting LB for service %s: %v", key, err), retryable
+			return fmt.Errorf("Error getting LB for service %s: %v", key, err), retryable, nil
 		}
 		if exists {
 			glog.Infof("Deleting existing load balancer for service %s that no longer needs a load balancer.", key)
 			s.eventRecorder.Event(service, v1.EventTypeNormal, "DeletingLoadBalancer", "Deleting load balancer")
-			if err := s.balancer.EnsureLoadBalancerDeleted(s.clusterName, service); err != nil {
-				return err, retryable
+			if err != nil {
+				return err, retryable, nil
+			}
+			if err = s.balancer.EnsureLoadBalancerDeleted(s.clusterName, service); err != nil {
+				return err, retryable, nil
 			}
 			s.eventRecorder.Event(service, v1.EventTypeNormal, "DeletedLoadBalancer", "Deleted load balancer")
 		}
@@ -302,7 +306,7 @@ func (s *ServiceController) createLoadBalancerIfNeeded(key string, service *v1.S
 		s.eventRecorder.Event(service, v1.EventTypeNormal, "EnsuringLoadBalancer", "Ensuring load balancer")
 		newState, err = s.ensureLoadBalancer(service)
 		if err != nil {
-			return fmt.Errorf("Failed to ensure load balancer for service %s: %v", key, err), retryable
+			return fmt.Errorf("Failed to ensure load balancer for service %s: %v", key, err), retryable, nil
 		}
 		s.eventRecorder.Event(service, v1.EventTypeNormal, "EnsuredLoadBalancer", "Ensured load balancer")
 	}
@@ -317,13 +321,13 @@ func (s *ServiceController) createLoadBalancerIfNeeded(key string, service *v1.S
 		service.Status.LoadBalancer = *newState
 
 		if err := s.persistUpdate(service); err != nil {
-			return fmt.Errorf("Failed to persist updated status to apiserver, even after retries. Giving up: %v", err), notRetryable
+			return fmt.Errorf("Failed to persist updated status to apiserver, even after retries. Giving up: %v", err), notRetryable, nil
 		}
 	} else {
 		glog.V(2).Infof("Not persisting unchanged LoadBalancerStatus for service %s to registry.", key)
 	}
 
-	return nil, notRetryable
+	return nil, notRetryable, service
 }
 
 func (s *ServiceController) persistUpdate(service *v1.Service) error {

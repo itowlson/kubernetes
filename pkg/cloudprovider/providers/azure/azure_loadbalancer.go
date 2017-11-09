@@ -802,10 +802,12 @@ func (az *Cloud) reconcileLoadBalancer(lb network.LoadBalancer, fipConfiguration
 // This entails adding required, missing SecurityRules and removing stale rules.
 func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName string, service *v1.Service, lbIP *string, wantLb bool) (network.SecurityGroup, bool, error) {
 	serviceName := getServiceName(service)
-	var ports []v1.ServicePort
-	if wantLb {
-		ports = service.Spec.Ports
-	} else {
+	ports := service.Spec.Ports
+	if ports == nil {
+		if useSharedSecurityRule(service) {
+			glog.V(2).Infof("Attempting to reconcile security group for service %s, but service uses shared rule and we don't know which port it's for", service.Name)
+			return sg, false, fmt.Errorf("No port info for reconciling shared rule for service %s", service.Name)
+		}
 		ports = []v1.ServicePort{}
 	}
 
@@ -815,6 +817,12 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 			return sg, false, fmt.Errorf("No load balancer IP for setting up security rules for service %s", service.Name)
 		}
 		destinationIPAddress = *lbIP
+	} else {
+		if len(service.Status.LoadBalancer.Ingress) > 0 {
+			destinationIPAddress = service.Status.LoadBalancer.Ingress[0].IP
+		} else if lbIP != nil {
+			destinationIPAddress = *lbIP
+		}
 	}
 	if destinationIPAddress == "" {
 		destinationIPAddress = "*"
@@ -834,27 +842,31 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 			sourceAddressPrefixes = append(sourceAddressPrefixes, ip.String())
 		}
 	}
-	expectedSecurityRules := make([]network.SecurityRule, len(ports)*len(sourceAddressPrefixes))
+	expectedSecurityRules := []network.SecurityRule{}
 
-	for i, port := range ports {
-		_, securityProto, _, err := getProtocolsFromKubernetesProtocol(port.Protocol)
-		if err != nil {
-			return sg, false, err
-		}
-		for j := range sourceAddressPrefixes {
-			ix := i*len(sourceAddressPrefixes) + j
-			securityRuleName := getSecurityRuleName(service, port, sourceAddressPrefixes[j])
-			expectedSecurityRules[ix] = network.SecurityRule{
-				Name: to.StringPtr(securityRuleName),
-				SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
-					Protocol:                 *securityProto,
-					SourcePortRange:          to.StringPtr("*"),
-					DestinationPortRange:     to.StringPtr(strconv.Itoa(int(port.Port))),
-					SourceAddressPrefix:      to.StringPtr(sourceAddressPrefixes[j]),
-					DestinationAddressPrefix: to.StringPtr(destinationIPAddress),
-					Access:    network.SecurityRuleAccessAllow,
-					Direction: network.SecurityRuleDirectionInbound,
-				},
+	if wantLb {
+		expectedSecurityRules = make([]network.SecurityRule, len(ports)*len(sourceAddressPrefixes))
+
+		for i, port := range ports {
+			_, securityProto, _, err := getProtocolsFromKubernetesProtocol(port.Protocol)
+			if err != nil {
+				return sg, false, err
+			}
+			for j := range sourceAddressPrefixes {
+				ix := i*len(sourceAddressPrefixes) + j
+				securityRuleName := getSecurityRuleName(service, port, sourceAddressPrefixes[j])
+				expectedSecurityRules[ix] = network.SecurityRule{
+					Name: to.StringPtr(securityRuleName),
+					SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
+						Protocol:                 *securityProto,
+						SourcePortRange:          to.StringPtr("*"),
+						DestinationPortRange:     to.StringPtr(strconv.Itoa(int(port.Port))),
+						SourceAddressPrefix:      to.StringPtr(sourceAddressPrefixes[j]),
+						DestinationAddressPrefix: to.StringPtr(destinationIPAddress),
+						Access:    network.SecurityRuleAccessAllow,
+						Direction: network.SecurityRuleDirectionInbound,
+					},
+				}
 			}
 		}
 	}
@@ -884,6 +896,39 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 			}
 		}
 	}
+	// update security rules: if the service uses a shared rule and is being deleted,
+	// then remove it from the shared rule
+	if useSharedSecurityRule(service) && !wantLb {
+		for _, port := range ports {
+			for _, sourceAddressPrefix := range sourceAddressPrefixes {
+				sharedRuleName := getSecurityRuleName(service, port, sourceAddressPrefix)
+				sharedIndex, sharedRule, sharedRuleFound := findSecurityRuleByNameEx2LatestForDave(updatedRules, sharedRuleName)
+				if !sharedRuleFound {
+					glog.V(4).Infof("Expected to find shared rule %s for service %s being deleted, but did not", sharedRuleName, service.Name)
+					return sg, false, fmt.Errorf("Expected to find shared rule %s for service %s being deleted, but did not", sharedRuleName, service.Name)
+				}
+				if sharedRule.DestinationAddressPrefixes == nil {
+					glog.V(4).Infof("Expected to have array of destinations in shared rule for service %s being deleted, but did not", service.Name)
+					return sg, false, fmt.Errorf("Expected to have array of destinations in shared rule for service %s being deleted, but did not", service.Name)
+				}
+				existingPrefixes := *sharedRule.DestinationAddressPrefixes
+				addressIndex, found := findIndex(existingPrefixes, destinationIPAddress)
+				if !found {
+					glog.V(4).Infof("Expected to find destination address %s in shared rule %s for service %s being deleted, but did not", destinationIPAddress, sharedRuleName, service.Name)
+					return sg, false, fmt.Errorf("Expected to find destination address %s in shared rule %s for service %s being deleted, but did not", destinationIPAddress, sharedRuleName, service.Name)
+				}
+				if len(existingPrefixes) == 1 {
+					// delete the shared rule
+				} else {
+					newDestinations := append(existingPrefixes[:addressIndex], existingPrefixes[addressIndex+1:]...)
+					sharedRule.DestinationAddressPrefixes = &newDestinations
+					updatedRules[sharedIndex] = sharedRule
+				}
+				dirtySg = true
+			}
+		}
+	}
+
 	// update security rules: prepare any existing rules for consolidation
 	for index, rule := range updatedRules {
 		if allowsConsolidation(rule) {
@@ -920,6 +965,24 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 		sg.SecurityRules = &updatedRules
 	}
 	return sg, dirtySg, nil
+}
+
+func findSecurityRuleByNameEx2LatestForDave(rules []network.SecurityRule, ruleName string) (int, network.SecurityRule, bool) {
+	for index, rule := range rules {
+		if rule.Name != nil && strings.EqualFold(*rule.Name, ruleName) {
+			return index, rule, true
+		}
+	}
+	return 0, network.SecurityRule{}, false
+}
+
+func findIndex(strs []string, s string) (int, bool) {
+	for index, str := range strs {
+		if strings.EqualFold(str, s) {
+			return index, true
+		}
+	}
+	return 0, false
 }
 
 func allowsConsolidation(rule network.SecurityRule) bool {
