@@ -1027,6 +1027,7 @@ func consolidate(existingRule network.SecurityRule, newRule network.SecurityRule
 	return network.SecurityRule{
 		Name: existingRule.Name,
 		SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
+			Priority:                   existingRule.Priority,
 			Protocol:                   existingRule.Protocol,
 			SourcePortRanges:           existingRule.SourcePortRanges,
 			DestinationPortRanges:      existingRule.DestinationPortRanges,
