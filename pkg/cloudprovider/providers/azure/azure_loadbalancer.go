@@ -918,7 +918,7 @@ func (az *Cloud) reconcileSecurityGroup(sg network.SecurityGroup, clusterName st
 					return sg, false, fmt.Errorf("Expected to find destination address %s in shared rule %s for service %s being deleted, but did not", destinationIPAddress, sharedRuleName, service.Name)
 				}
 				if len(existingPrefixes) == 1 {
-					// delete the shared rule
+					updatedRules = append(updatedRules[:sharedIndex], updatedRules[sharedIndex+1:]...)
 				} else {
 					newDestinations := append(existingPrefixes[:addressIndex], existingPrefixes[addressIndex+1:]...)
 					sharedRule.DestinationAddressPrefixes = &newDestinations
