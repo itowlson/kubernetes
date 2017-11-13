@@ -1012,9 +1012,9 @@ func makeConsolidatable(rule network.SecurityRule) network.SecurityRule {
 		SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
 			Priority:                   rule.Priority,
 			Protocol:                   rule.Protocol,
-			SourcePortRanges:           collectionOrSingle(rule.SourcePortRanges, rule.SourcePortRange),
+			SourcePortRange:            rule.SourcePortRange,
 			DestinationPortRanges:      collectionOrSingle(rule.DestinationPortRanges, rule.DestinationPortRange),
-			SourceAddressPrefixes:      collectionOrSingle(rule.SourceAddressPrefixes, rule.SourceAddressPrefix),
+			SourceAddressPrefix:        rule.SourceAddressPrefix,
 			DestinationAddressPrefixes: collectionOrSingle(rule.DestinationAddressPrefixes, rule.DestinationAddressPrefix),
 			Access:    rule.Access,
 			Direction: rule.Direction,
@@ -1029,9 +1029,9 @@ func consolidate(existingRule network.SecurityRule, newRule network.SecurityRule
 		SecurityRulePropertiesFormat: &network.SecurityRulePropertiesFormat{
 			Priority:                   existingRule.Priority,
 			Protocol:                   existingRule.Protocol,
-			SourcePortRanges:           existingRule.SourcePortRanges,
+			SourcePortRange:            existingRule.SourcePortRange,
 			DestinationPortRanges:      existingRule.DestinationPortRanges,
-			SourceAddressPrefixes:      existingRule.SourceAddressPrefixes,
+			SourceAddressPrefix:        existingRule.SourceAddressPrefix,
 			DestinationAddressPrefixes: appendElements(existingRule.SecurityRulePropertiesFormat.DestinationAddressPrefixes, newRule.DestinationAddressPrefix, newRule.DestinationAddressPrefixes),
 			Access:    existingRule.Access,
 			Direction: existingRule.Direction,
